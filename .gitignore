@@ -1,0 +1,25 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Logs / local runtime
+*.log
+proxy.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+*.user
+
+# Local overrides (keep example/default config tracked)
+config.local.json
+.env
+.env.*
+
+# Scratch
+*.tmp
+*.bak

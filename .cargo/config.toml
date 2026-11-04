@@ -1,0 +1,5 @@
+[target.x86_64-unknown-linux-gnu]
+linker = "scripts/zig-ld-x64.cmd"
+
+[target.aarch64-unknown-linux-gnu]
+linker = "scripts/zig-ld-arm64.cmd"
