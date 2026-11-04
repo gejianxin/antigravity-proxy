@@ -1,0 +1,33 @@
+{
+  "_comment": "macOS arm64 配置。与 Linux/Windows 字段相同。把本文件和 libantigravity_proxy.dylib 留给启动脚本，或用 ANTIGRAVITY_PROXY_CONFIG 指向它。",
+  "_version": "2.5-macos",
+  "log_level": "info",
+  "traffic_logging": false,
+  "child_injection": true,
+  "child_injection_mode": "filtered",
+  "child_injection_exclude": ["git", "bash", "sh", "zsh"],
+  "target_processes": [
+    "Antigravity",
+    "language_server",
+    "language_server_macos",
+    "agy",
+    "node"
+  ],
+  "proxy": { "host": "127.0.0.1", "port": 7898, "type": "socks5" },
+  "fake_ip": { "enabled": true, "cidr": "198.18.0.0/15" },
+  "timeout": { "connect": 5000, "send": 5000, "recv": 5000 },
+  "proxy_rules": {
+    "allowed_ports": [80, 443],
+    "dns_mode": "direct",
+    "ipv6_mode": "proxy",
+    "udp_mode": "auto",
+    "udp_fallback": "block",
+    "routing": {
+      "enabled": true,
+      "priority_mode": "order",
+      "default_action": "proxy",
+      "use_default_private": true,
+      "rules": []
+    }
+  }
+}

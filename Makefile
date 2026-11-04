@@ -18,6 +18,13 @@ arm64:
 	@cp target/aarch64-unknown-linux-gnu/release/libantigravity_proxy.so bin/arm64/
 	@echo "Built bin/arm64/libantigravity_proxy.so"
 
+macos:
+	@uname -s | grep -q Darwin || (echo "Build the macOS dylib on a Mac or in GitHub Actions macos-latest. This host has no Apple SDK." && exit 1)
+	$(CARGO) build --release -p macos-proxy
+	@if [ "$$(uname -m)" = "arm64" ]; then dest=bin/macos-arm64; else dest=bin/macos-x64; fi; \
+	  mkdir -p $$dest && cp target/release/libantigravity_proxy.dylib $$dest/ && \
+	  echo "Built $$dest/libantigravity_proxy.dylib"
+
 windows:
 	$(CARGO) build --release --target x86_64-pc-windows-gnu -p windows-proxy -p windows-injector
 	@mkdir -p bin/windows-x64
@@ -29,4 +36,4 @@ clean:
 	$(CARGO) clean
 	rm -rf bin/x64/*.so bin/arm64/*.so bin/windows-x64/*.dll bin/windows-x64/*.exe
 
-.PHONY: all x64 arm64 windows clean
+.PHONY: all x64 arm64 windows macos clean

@@ -43,6 +43,34 @@ build_arm64() {
     echo " -> [成功] bin/arm64/libantigravity_proxy.so"
 }
 
+build_macos() {
+    if [ "$(uname -s)" != "Darwin" ]; then
+        echo "macOS dylib 需要在 Mac 或 GitHub Actions macos-latest 上编译。"
+        echo "Linux 上没有可用的 Apple SDK，本脚本不从 Linux 交叉编译 darwin 目标。"
+        echo "在 Mac 上: cargo build --release -p macos-proxy"
+        echo "          cargo build --release --target x86_64-apple-darwin -p macos-proxy"
+        return
+    fi
+    echo "编译 macOS 原生 dylib..."
+    cargo build --release -p macos-proxy
+    local arch dest
+    arch="$(uname -m)"
+    if [ "$arch" = "arm64" ]; then
+        dest="bin/macos-arm64"
+    else
+        dest="bin/macos-x64"
+    fi
+    mkdir -p "$dest"
+    cp target/release/libantigravity_proxy.dylib "$dest/"
+    echo " -> [成功] $dest/libantigravity_proxy.dylib"
+    if rustup target list --installed | grep -q 'x86_64-apple-darwin'; then
+        cargo build --release --target x86_64-apple-darwin -p macos-proxy
+        mkdir -p bin/macos-x64
+        cp target/x86_64-apple-darwin/release/libantigravity_proxy.dylib bin/macos-x64/
+        echo " -> [成功] bin/macos-x64/libantigravity_proxy.dylib"
+    fi
+}
+
 build_windows() {
     if ! command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
         echo "跳过 Windows x64: 未安装 x86_64-w64-mingw32-gcc"
@@ -74,13 +102,17 @@ case "$TARGET" in
     windows)
         build_windows
         ;;
+    macos)
+        build_macos
+        ;;
     all)
         build_native
         build_arm64
         build_windows
+        build_macos
         ;;
     *)
-        echo "用法: $0 [native|x64|arm64|windows|all]"
+        echo "用法: $0 [native|x64|arm64|windows|macos|all]"
         exit 1
         ;;
 esac

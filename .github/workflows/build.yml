@@ -15,7 +15,7 @@ jobs:
       - name: Install cross linkers
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
       - name: Unit tests
-        run: cargo test --workspace --exclude windows-proxy --exclude windows-injector
+        run: cargo test --workspace --exclude windows-proxy --exclude windows-injector --exclude macos-proxy
       - name: Linux x64
         run: cargo build --release -p antigravity-proxy
       - name: Linux arm64
@@ -27,3 +27,37 @@ jobs:
 
       # Windows injection and Winsock hook tests need a Windows process.
       # ubuntu-latest can compile version.dll, but it cannot host Antigravity.
+
+  macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            dest: macos-arm64
+            smoke: true
+          - target: x86_64-apple-darwin
+            dest: macos-x64
+            smoke: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} -p macos-proxy
+      - name: Stage dylib
+        run: |
+          mkdir -p "bin/${{ matrix.dest }}"
+          cp "target/${{ matrix.target }}/release/libantigravity_proxy.dylib" "bin/${{ matrix.dest }}/"
+      - name: FakeIP smoke (native arm64 only)
+        if: ${{ matrix.smoke }}
+        run: bash scripts/smoke-macos.sh "bin/${{ matrix.dest }}/libantigravity_proxy.dylib"
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: libantigravity_proxy-${{ matrix.dest }}
+          path: |
+            bin/${{ matrix.dest }}/libantigravity_proxy.dylib
+            bin/${{ matrix.dest }}/config.json

@@ -42,6 +42,12 @@ impl DecideOpts {
         fake_ip_bypasses_port_filter: false,
         udp_auto_is_direct: false,
     };
+    /// New platform: apply the port whitelist, and treat `udp_mode=auto` as
+    /// SOCKS5 UDP associate when the proxy is SOCKS5.
+    pub const MACOS: Self = Self {
+        fake_ip_bypasses_port_filter: false,
+        udp_auto_is_direct: false,
+    };
 }
 
 #[derive(Debug, Clone)]
