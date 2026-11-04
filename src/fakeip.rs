@@ -1,211 +1,174 @@
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
-use std::str::FromStr;
-use std::sync::RwLock;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub const FAKE_IP_MAGIC: u64 = 0x41475950524F5859; // "AGYPROXY"
+struct MapEntry {
+    key: String,
+    original: String,
+}
 
 pub struct FakeIpPool {
-    net_ip: u32,
-    net_mask: u32,
-    current_alloc: u32,
+    base: u32,
+    mask: u32,
+    network_size: u32,
+    cursor: u32,
     domain_to_ip: HashMap<String, u32>,
-    ip_to_domain: HashMap<u32, String>,
+    ip_to_domain: HashMap<u32, MapEntry>,
 }
 
 impl FakeIpPool {
     pub fn new(cidr: &str) -> Self {
-        let (base, prefix) = match cidr.split_once('/') {
-            Some((ip_str, p_str)) => (
-                Ipv4Addr::from_str(ip_str).unwrap_or(Ipv4Addr::new(198, 18, 0, 0)),
-                p_str.parse::<u32>().unwrap_or(15),
-            ),
-            None => (Ipv4Addr::new(198, 18, 0, 0), 15),
-        };
-
-        let net_ip = u32::from(base);
-        let net_mask = if prefix == 0 {
-            0
-        } else {
-            (!0u32).checked_shl(32 - prefix).unwrap_or(0)
-        };
-
-        let start_alloc = (net_ip & net_mask) + 2;
-
+        let (base, mask, network_size) =
+            parse_cidr(cidr).unwrap_or_else(|| parse_cidr("198.18.0.0/15").unwrap());
         Self {
-            net_ip,
-            net_mask,
-            current_alloc: start_alloc,
+            base,
+            mask,
+            network_size,
+            cursor: 1,
             domain_to_ip: HashMap::new(),
             ip_to_domain: HashMap::new(),
         }
     }
 
-    pub fn is_fake_ip(&self, ip_host_order: u32) -> bool {
-        (ip_host_order & self.net_mask) == (self.net_ip & self.net_mask)
+    pub fn network_size(&self) -> u32 {
+        self.network_size
     }
 
+    pub fn is_fake_ip(&self, ip_host_order: u32) -> bool {
+        self.network_size > 2 && (ip_host_order & self.mask) == self.base
+    }
+
+    /// Allocate a stable virtual address for `domain`.
+    ///
+    /// The pool is a ring over the CIDR, skipping the network and broadcast
+    /// addresses. When an address is reused, the previous domain mapping is
+    /// removed in both directions so a wrapped pool cannot alias two names.
     pub fn get_or_create(&mut self, domain: &str) -> u32 {
-        let key = domain.to_lowercase();
+        let original = domain.trim().trim_end_matches('.').to_string();
+        if original.is_empty() {
+            return 0;
+        }
+        let key = original.to_ascii_lowercase();
         if let Some(&ip) = self.domain_to_ip.get(&key) {
             return ip;
         }
-
-        let mut alloc = self.current_alloc;
-        self.current_alloc = self.current_alloc.wrapping_add(1);
-
-        // Check if exceeded CIDR pool range, wrap around
-        if (alloc & self.net_mask) != (self.net_ip & self.net_mask) {
-            self.current_alloc = (self.net_ip & self.net_mask) + 2;
-            alloc = self.current_alloc;
-            self.current_alloc = self.current_alloc.wrapping_add(1);
+        if self.network_size <= 2 {
+            return 0;
         }
 
-        self.domain_to_ip.insert(key.clone(), alloc);
-        self.ip_to_domain.insert(alloc, domain.to_string());
-        alloc
+        let offset = self.cursor;
+        self.cursor = self.cursor.saturating_add(1);
+        if self.cursor >= self.network_size - 1 {
+            self.cursor = 1;
+        }
+        let ip = self.base | offset;
+
+        if let Some(old) = self.ip_to_domain.remove(&ip) {
+            if self.domain_to_ip.get(&old.key).copied() == Some(ip) {
+                self.domain_to_ip.remove(&old.key);
+            }
+        }
+
+        self.domain_to_ip.insert(key.clone(), ip);
+        self.ip_to_domain.insert(ip, MapEntry { key, original });
+        ip
     }
 
     pub fn get_domain(&self, ip_host_order: u32) -> Option<String> {
-        self.ip_to_domain.get(&ip_host_order).cloned()
+        self.ip_to_domain
+            .get(&ip_host_order)
+            .map(|e| e.original.clone())
     }
+}
+
+fn parse_cidr(cidr: &str) -> Option<(u32, u32, u32)> {
+    let (ip_str, bits_str) = cidr.trim().split_once('/')?;
+    let bits: u32 = bits_str.trim().parse().ok()?;
+    if bits == 0 || bits > 32 {
+        return None;
+    }
+    let addr = ip_str.trim().parse::<Ipv4Addr>().ok()?;
+    let mask = u32::MAX << (32 - bits);
+    let base = u32::from(addr) & mask;
+    let network_size = 1u32 << (32 - bits);
+    Some((base, mask, network_size))
 }
 
 static POOL: RwLock<Option<FakeIpPool>> = RwLock::new(None);
 
+fn read_pool() -> RwLockReadGuard<'static, Option<FakeIpPool>> {
+    POOL.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn write_pool() -> RwLockWriteGuard<'static, Option<FakeIpPool>> {
+    POOL.write().unwrap_or_else(|e| e.into_inner())
+}
+
 pub fn init(cidr: &str) {
     let pool = FakeIpPool::new(cidr);
-    let mut guard = POOL.write().unwrap();
-    *guard = Some(pool);
+    *write_pool() = Some(pool);
 }
 
 pub fn is_fakeip(ip_host_order: u32) -> bool {
-    let guard = POOL.read().unwrap();
-    if let Some(ref p) = *guard {
-        p.is_fake_ip(ip_host_order)
-    } else {
-        false
-    }
+    read_pool()
+        .as_ref()
+        .map(|p| p.is_fake_ip(ip_host_order))
+        .unwrap_or(false)
 }
 
 pub fn get_or_create(domain: &str) -> u32 {
-    let mut guard = POOL.write().unwrap();
-    if let Some(ref mut p) = *guard {
-        p.get_or_create(domain)
-    } else {
-        0
+    let mut guard = write_pool();
+    match guard.as_mut() {
+        Some(pool) => pool.get_or_create(domain),
+        None => 0,
     }
 }
 
 pub fn get_domain(ip_host_order: u32) -> Option<String> {
-    let guard = POOL.read().unwrap();
-    if let Some(ref p) = *guard {
-        p.get_domain(ip_host_order)
-    } else {
-        None
-    }
+    read_pool()
+        .as_ref()
+        .and_then(|p| p.get_domain(ip_host_order))
 }
 
-#[repr(C)]
-pub struct FakeAiContainer {
-    pub magic: u64,
-    pub ai: libc::addrinfo,
-    pub sin: libc::sockaddr_in,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-pub fn create_fake_addrinfo(
-    fake_ip_host_order: u32,
-    port: u16,
-    hints: Option<&libc::addrinfo>,
-) -> *mut libc::addrinfo {
-    let mut container = Box::new(FakeAiContainer {
-        magic: FAKE_IP_MAGIC,
-        ai: unsafe { std::mem::zeroed() },
-        sin: unsafe { std::mem::zeroed() },
-    });
-
-    container.sin.sin_family = libc::AF_INET as libc::sa_family_t;
-    container.sin.sin_port = port.to_be();
-    container.sin.sin_addr.s_addr = fake_ip_host_order.to_be();
-
-    container.ai.ai_flags = hints.map(|h| h.ai_flags).unwrap_or(0);
-    container.ai.ai_family = libc::AF_INET;
-    container.ai.ai_socktype = hints
-        .and_then(|h| if h.ai_socktype != 0 { Some(h.ai_socktype) } else { None })
-        .unwrap_or(libc::SOCK_STREAM);
-    container.ai.ai_protocol = hints
-        .and_then(|h| if h.ai_protocol != 0 { Some(h.ai_protocol) } else { None })
-        .unwrap_or(libc::IPPROTO_TCP);
-    container.ai.ai_addrlen = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
-    container.ai.ai_addr = &mut container.sin as *mut _ as *mut libc::sockaddr;
-    container.ai.ai_canonname = std::ptr::null_mut();
-    container.ai.ai_next = std::ptr::null_mut();
-
-    let raw_ptr = Box::into_raw(container);
-    unsafe { &mut (*raw_ptr).ai as *mut libc::addrinfo }
-}
-
-pub fn is_fake_addrinfo(ai: *const libc::addrinfo) -> bool {
-    if ai.is_null() {
-        return false;
-    }
-    unsafe {
-        let offset = std::mem::offset_of!(FakeAiContainer, ai);
-        let container_ptr = (ai as *const u8).sub(offset) as *const FakeAiContainer;
-        (*container_ptr).magic == FAKE_IP_MAGIC
-    }
-}
-
-pub fn free_fake_addrinfo(ai: *mut libc::addrinfo) {
-    if ai.is_null() {
-        return;
-    }
-    unsafe {
-        let offset = std::mem::offset_of!(FakeAiContainer, ai);
-        let container_ptr = (ai as *mut u8).sub(offset) as *mut FakeAiContainer;
-        if (*container_ptr).magic == FAKE_IP_MAGIC {
-            (*container_ptr).magic = 0;
-            drop(Box::from_raw(container_ptr));
-        }
-    }
-}
-
-pub fn create_fake_hostent(domain: &str, fake_ip_host_order: u32) -> *mut libc::hostent {
-    struct HostentStorage {
-        h: libc::hostent,
-        addrs: [u32; 2],
-        addr_ptrs: [*mut libc::c_char; 2],
-        aliases: [*mut libc::c_char; 1],
-        name_buf: Vec<u8>,
+    #[test]
+    fn repeats_return_the_same_address() {
+        let mut pool = FakeIpPool::new("198.18.0.0/15");
+        let a = pool.get_or_create("Example.COM");
+        let b = pool.get_or_create("example.com.");
+        assert_eq!(a, b);
+        assert_eq!(pool.get_domain(a).as_deref(), Some("Example.COM"));
+        assert!(pool.is_fake_ip(a));
+        assert!(!pool.is_fake_ip(u32::from(Ipv4Addr::new(1, 2, 3, 4))));
     }
 
-    std::thread_local! {
-        static STORAGE: std::cell::RefCell<HostentStorage> = std::cell::RefCell::new(HostentStorage {
-            h: unsafe { std::mem::zeroed() },
-            addrs: [0, 0],
-            addr_ptrs: [std::ptr::null_mut(), std::ptr::null_mut()],
-            aliases: [std::ptr::null_mut()],
-            name_buf: Vec::new(),
-        });
+    #[test]
+    fn wrap_evicts_the_previous_domain() {
+        let mut pool = FakeIpPool::new("198.18.0.0/30");
+        assert_eq!(pool.network_size(), 4);
+        let a = pool.get_or_create("a.example");
+        let b = pool.get_or_create("b.example");
+        assert_ne!(a, b);
+        let c = pool.get_or_create("c.example");
+        assert_eq!(c, a);
+        assert_eq!(pool.get_domain(a).as_deref(), Some("c.example"));
+        assert!(pool.get_domain(b).is_some());
+        let a_again = pool.get_or_create("a.example");
+        assert_ne!(a_again, c);
+        assert_eq!(pool.get_domain(a_again).as_deref(), Some("a.example"));
+        assert_ne!(pool.get_domain(c).as_deref(), Some("a.example"));
     }
 
-    STORAGE.with(|cell| {
-        let mut st = cell.borrow_mut();
-        st.name_buf = domain.as_bytes().to_vec();
-        st.name_buf.push(0);
-
-        st.addrs[0] = fake_ip_host_order.to_be();
-        st.addrs[1] = 0;
-        st.addr_ptrs[0] = st.addrs.as_mut_ptr() as *mut libc::c_char;
-        st.addr_ptrs[1] = std::ptr::null_mut();
-        st.aliases[0] = std::ptr::null_mut();
-
-        st.h.h_name = st.name_buf.as_mut_ptr() as *mut libc::c_char;
-        st.h.h_aliases = st.aliases.as_mut_ptr();
-        st.h.h_addrtype = libc::AF_INET;
-        st.h.h_length = 4;
-        st.h.h_addr_list = st.addr_ptrs.as_mut_ptr();
-
-        &mut st.h as *mut libc::hostent
-    })
+    #[test]
+    fn tiny_prefix_refuses_to_allocate() {
+        let mut pool = FakeIpPool::new("198.18.0.1/32");
+        assert_eq!(pool.get_or_create("a.example"), 0);
+        let mut pool = FakeIpPool::new("not-a-cidr");
+        let ip = pool.get_or_create("a.example");
+        assert!(pool.is_fake_ip(ip));
+        assert_eq!(Ipv4Addr::from(ip), Ipv4Addr::new(198, 18, 0, 1));
+    }
 }

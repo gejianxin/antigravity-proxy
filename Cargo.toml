@@ -1,13 +1,13 @@
 [package]
 name = "antigravity-proxy"
-version = "2.4.0"
+version = "2.5.0"
 edition = "2021"
 authors = ["Antigravity Contributors"]
 description = "Transparent network proxy interceptor for Antigravity Linux (x64 & arm64)"
 
 [lib]
 name = "antigravity_proxy"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 libc = "0.2"
