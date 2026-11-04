@@ -7,13 +7,3 @@ rustflags = ["-C", "link-arg=-static", "-C", "link-arg=-static-libgcc"]
 
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"
-
-# Workspace release enables LTO and `strip = true`. On Mach-O that can drop
-# the relocations dyld reads from `__DATA,__interpose`, so the inserted
-# dylib segfaults before `main`. These flags are appended after the profile
-# and apply only to Apple targets.
-[target.aarch64-apple-darwin]
-rustflags = ["-C", "strip=none", "-C", "lto=off"]
-
-[target.x86_64-apple-darwin]
-rustflags = ["-C", "strip=none", "-C", "lto=off"]
