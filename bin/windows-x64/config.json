@@ -1,0 +1,59 @@
+{
+  "_comment": "Antigravity-Proxy Windows x64 配置。与 Linux config.json 字段相同，目标进程名为 Windows 可执行文件。",
+  "_version": "2.5-windows",
+  "_build": {
+    "platform": "windows",
+    "supported_arch": ["x86_64"]
+  },
+  "log_level": "info",
+  "traffic_logging": false,
+  "diagnostics": {
+    "agent_ip_probe": false
+  },
+  "child_injection": true,
+  "child_injection_mode": "filtered",
+  "child_injection_exclude": [
+    "git",
+    "bash",
+    "sh",
+    "cmd",
+    "powershell",
+    "which"
+  ],
+  "target_processes": [
+    "agy.exe",
+    "language_server.exe",
+    "language_server_windows",
+    "Antigravity.exe",
+    "Antigravity IDE.exe",
+    "node.exe"
+  ],
+  "proxy": {
+    "host": "127.0.0.1",
+    "port": 7898,
+    "type": "socks5"
+  },
+  "fake_ip": {
+    "enabled": true,
+    "cidr": "198.18.0.0/15"
+  },
+  "timeout": {
+    "connect": 5000,
+    "send": 5000,
+    "recv": 5000
+  },
+  "proxy_rules": {
+    "allowed_ports": [80, 443],
+    "dns_mode": "direct",
+    "ipv6_mode": "proxy",
+    "udp_mode": "auto",
+    "udp_fallback": "block",
+    "routing": {
+      "enabled": true,
+      "priority_mode": "order",
+      "default_action": "proxy",
+      "use_default_private": true,
+      "rules": []
+    }
+  }
+}
