@@ -8,11 +8,8 @@
 #[cfg(target_os = "macos")]
 mod mac;
 
-#[cfg(target_os = "macos")]
-#[ctor::ctor]
-fn agy_macos_ctor() {
-    mac::startup();
-}
+// No load-time constructor. dyld can run those before the Rust runtime is
+// ready, which segfaults. Hooks call `startup()` on first use instead.
 
 #[cfg(not(target_os = "macos"))]
 #[no_mangle]

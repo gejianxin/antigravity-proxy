@@ -34,12 +34,20 @@ extern "C" {
     fn gethostbyname(name: *const libc::c_char) -> *mut libc::hostent;
 }
 
+fn libsystem() -> *mut libc::c_void {
+    static HANDLE: OnceLock<usize> = OnceLock::new();
+    let handle = *HANDLE.get_or_init(|| unsafe {
+        let path = CString::new("/usr/lib/libSystem.B.dylib").unwrap();
+        libc::dlopen(path.as_ptr(), libc::RTLD_NOW) as usize
+    });
+    handle as *mut libc::c_void
+}
+
+/// Resolve the libSystem symbol directly. `RTLD_NEXT` can return the
+/// interposer itself and recurse until the stack overflows.
 pub fn sym(name: &str) -> usize {
     let c = CString::new(name).unwrap_or_default();
-    unsafe {
-        let ptr = libc::dlsym(libc::RTLD_NEXT, c.as_ptr());
-        ptr as usize
-    }
+    unsafe { libc::dlsym(libsystem(), c.as_ptr()) as usize }
 }
 
 pub unsafe fn raw_connect(fd: libc::c_int, addr: *const libc::sockaddr, len: libc::socklen_t) -> libc::c_int {

@@ -46,7 +46,6 @@ name = "macos-proxy"
 version = "2.5.0"
 dependencies = [
  "agy-core",
- "ctor",
  "libc",
 ]
 

@@ -15,5 +15,4 @@ crate-type = ["cdylib"]
 agy-core = { path = "../agy-core" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-ctor = "0.2"
 libc = "0.2"
