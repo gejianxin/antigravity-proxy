@@ -65,6 +65,24 @@ mod tests {
     }
 
     #[test]
+    fn macos_helper_name_matches_antigravity() {
+        let cfg = AppConfig::default();
+        assert!(is_targeted(
+            "Antigravity Helper",
+            &cfg,
+            HostPlatform::Macos,
+            false
+        ));
+        assert!(is_targeted(
+            "language_server",
+            &cfg,
+            HostPlatform::Macos,
+            false
+        ));
+        assert!(!is_targeted("git", &cfg, HostPlatform::Macos, false));
+    }
+
+    #[test]
     fn exclude_beats_inherit() {
         let mut cfg = AppConfig::default();
         cfg.child_injection_mode = "inherit".into();

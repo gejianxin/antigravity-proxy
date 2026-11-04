@@ -65,6 +65,7 @@ fn default_priority_mode() -> String {
 pub enum HostPlatform {
     Linux,
     Windows,
+    Macos,
 }
 
 pub fn default_target_processes(platform: HostPlatform) -> Vec<String> {
@@ -85,6 +86,13 @@ pub fn default_target_processes(platform: HostPlatform) -> Vec<String> {
             "Antigravity.exe".to_string(),
             "Antigravity IDE.exe".to_string(),
             "node.exe".to_string(),
+        ],
+        HostPlatform::Macos => vec![
+            "Antigravity".to_string(),
+            "language_server".to_string(),
+            "language_server_macos".to_string(),
+            "agy".to_string(),
+            "node".to_string(),
         ],
     }
 }
