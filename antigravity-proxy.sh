@@ -65,29 +65,63 @@ except Exception as e:
     exit 0
 fi
 
+# 默认把目标放到新会话里后台运行，脚本马上返回。
+# --foreground 留给需要盯着终端的诊断；--test 在上面已经前台跑完。
+FOREGROUND=0
+if [ "${1:-}" = "--foreground" ]; then
+    FOREGROUND=1
+    shift
+fi
+
 # 帮助信息
-if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
     echo "用法: $0 [选项] [可执行程序路径 [参数...]]"
     echo ""
     echo "选项:"
-    echo "  --test        运行代理环境注入与 FakeIP 诊断测试"
-    echo "  --help, -h    显示本帮助信息"
+    echo "  --test          前台运行代理环境注入与 FakeIP 诊断测试"
+    echo "  --foreground    在当前终端前台运行目标（关闭终端会结束它）"
+    echo "  --help, -h      显示本帮助信息"
+    echo ""
+    echo "默认启动会脱离终端并立刻返回，关闭终端不会结束 Antigravity。"
     echo ""
     echo "示例:"
-    echo "  $0                           # 自动搜寻并启动系统中的 Antigravity"
-    echo "  $0 /opt/Antigravity/antigravity  # 启动指定路径的 Antigravity"
-    echo "  $0 agy                       # 代理模式启动 Antigravity CLI"
+    echo "  $0                           # 自动搜寻并在后台启动 Antigravity"
+    echo "  $0 /opt/Antigravity/antigravity  # 后台启动指定路径的 Antigravity"
+    echo "  $0 agy                       # 后台启动 Antigravity CLI"
+    echo "  $0 --foreground agy          # 前台运行，便于看输出"
     echo "  $0 --test                    # 运行自检"
     exit 0
 fi
 
-# 如果指定了目标程序命令，则直接启动
+launch_target() {
+    export LD_PRELOAD="$SO_FILE${LD_PRELOAD:+:$LD_PRELOAD}"
+    if [ "$FOREGROUND" -eq 1 ]; then
+        echo "[启动] 前台运行（关闭终端会结束进程）: $*"
+        exec "$@"
+    fi
+
+    local log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/antigravity-proxy"
+    mkdir -p "$log_dir"
+    local log_file="$log_dir/launch.log"
+    # setsid 换到新会话，不再占用当前终端；nohup 忽略 SIGHUP。
+    if command -v setsid >/dev/null 2>&1; then
+        setsid nohup "$@" >>"$log_file" 2>&1 < /dev/null &
+    else
+        nohup "$@" >>"$log_file" 2>&1 < /dev/null &
+    fi
+    local pid=$!
+    disown "$pid" 2>/dev/null || true
+    echo "[启动] 已在后台运行: $* (PID $pid)"
+    echo "[启动] 关闭终端不会结束该进程。程序输出追加到 $log_file"
+}
+
+# 如果指定了目标程序命令，则启动
 if [ $# -gt 0 ]; then
     TARGET_CMD="$1"
     shift
-    echo "[启动] 正在以代理注入模式启动: $TARGET_CMD $@"
-    export LD_PRELOAD="$SO_FILE${LD_PRELOAD:+:$LD_PRELOAD}"
-    exec "$TARGET_CMD" "$@"
+    echo "[启动] 正在以代理注入模式启动: $TARGET_CMD $*"
+    launch_target "$TARGET_CMD" "$@"
+    exit 0
 fi
 
 # 未指定程序，自动搜寻常见的 Antigravity 安装位置
@@ -113,8 +147,8 @@ fi
 
 if [ -n "$FOUND_BIN" ] && [ -x "$FOUND_BIN" ]; then
     echo "[启动] 找到 Antigravity 可执行文件: $FOUND_BIN"
-    export LD_PRELOAD="$SO_FILE${LD_PRELOAD:+:$LD_PRELOAD}"
-    exec "$FOUND_BIN" "$@"
+    launch_target "$FOUND_BIN" "$@"
+    exit 0
 else
     echo "[提示] 未在常见目录中找到 antigravity 可执行文件。"
     echo "请直接将 antigravity 路径作为参数传递，例如:"
