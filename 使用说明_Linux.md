@@ -38,9 +38,11 @@ Windows 版本通过劫持 `version.dll` 拦截 Winsock API，而在 Linux 环�
 antigravity-proxy/
 ├── bin/
 │   ├── x64/
-│   │   └── libantigravity_proxy.so    # Linux x86_64 专用劫持库
+│   │   ├── libantigravity_proxy.so    # Linux x86_64 专用劫持库
+│   │   └── config.json                # 与 .so 一起使用；已有文件不会被构建覆盖
 │   ├── arm64/
-│   │   └── libantigravity_proxy.so    # Linux AArch64 (ARM64) 专用劫持库
+│   │   ├── libantigravity_proxy.so    # Linux AArch64 (ARM64) 专用劫持库
+│   │   └── config.json
 │   └── windows-x64/                   # Windows：复制 version.dll 与 config.json 即可
 │       ├── version.dll                # 放到 Antigravity.exe 旁边
 │       ├── config.json

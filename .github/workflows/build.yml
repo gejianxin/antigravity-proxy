@@ -24,6 +24,8 @@ jobs:
         run: cargo build --release --target x86_64-pc-windows-gnu -p windows-proxy -p windows-injector
       - name: Linux preload smoke
         run: bash scripts/smoke.sh target/release/libantigravity_proxy.so
+      - name: Staged config is present and not overwritten
+        run: bash scripts/check-stage-config.sh
 
       # Windows injection and Winsock hook tests need a Windows process.
       # ubuntu-latest can compile version.dll, but it cannot host Antigravity.
@@ -51,6 +53,7 @@ jobs:
         run: |
           mkdir -p "bin/${{ matrix.dest }}"
           cp "target/${{ matrix.target }}/release/libantigravity_proxy.dylib" "bin/${{ matrix.dest }}/"
+          bash scripts/stage-config.sh "bin/${{ matrix.dest }}"
       - name: FakeIP smoke (native arm64 only)
         if: ${{ matrix.smoke }}
         run: bash scripts/smoke-macos.sh "bin/${{ matrix.dest }}/libantigravity_proxy.dylib"

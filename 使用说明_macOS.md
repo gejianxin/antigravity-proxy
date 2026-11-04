@@ -4,10 +4,10 @@
 
 macOS 没有 Linux 的 `LD_PRELOAD`，也没有 Windows 那种把 `version.dll` 放在 exe 旁边的搜索顺序劫持。加载方式是 dyld 的 `DYLD_INSERT_LIBRARIES`：启动 **.app 里面的 Mach-O**，而不是用 `open -a`。`open` 会丢掉 `DYLD_*` 环境变量。
 
-1. 在 Mac 上编译，或从 GitHub Actions 的 `macos` 工件下载：
-   - Apple Silicon：`bin/macos-arm64/libantigravity_proxy.dylib`
-   - Intel：`bin/macos-x64/libantigravity_proxy.dylib`
-2. 同一目录里已经有一份 `config.json`（代理端口默认 `127.0.0.1:7898`）。按本机代理改 `proxy.port` / `proxy.type`。
+1. 在 Mac 上编译，或从 GitHub Actions 的 `macos` 工件下载 dylib 和同目录的 `config.json`：
+   - Apple Silicon：`bin/macos-arm64/libantigravity_proxy.dylib` 与 `config.json`
+   - Intel：`bin/macos-x64/libantigravity_proxy.dylib` 与 `config.json`
+2. 按本机代理改旁边 `config.json` 的 `proxy.port` / `proxy.type`（默认 `127.0.0.1:7898`）。构建和安装只在这个文件不存在时写入默认配置，不会覆盖你改过的内容。
 3. 启动：
 
 ```bash

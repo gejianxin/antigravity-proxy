@@ -9,14 +9,14 @@
 
 | 平台 | 产物 | 加载方式 |
 | --- | --- | --- |
-| Linux x64 | `bin/x64/libantigravity_proxy.so` | `LD_PRELOAD` |
-| Linux arm64 | `bin/arm64/libantigravity_proxy.so` | `LD_PRELOAD` |
+| Linux x64 | `bin/x64/libantigravity_proxy.so` + `config.json` | `LD_PRELOAD` |
+| Linux arm64 | `bin/arm64/libantigravity_proxy.so` + `config.json` | `LD_PRELOAD` |
 | Windows x64 | `bin/windows-x64/version.dll` + `config.json` | 放在 `Antigravity.exe` 同目录，由 DLL 搜索顺序加载 |
-| macOS arm64 / x64 | `bin/macos-arm64` 或 `bin/macos-x64` 的 `libantigravity_proxy.dylib` | `DYLD_INSERT_LIBRARIES`，直接执行 .app 内的 Mach-O |
+| macOS arm64 / x64 | `bin/macos-arm64` 或 `bin/macos-x64` 的 `libantigravity_proxy.dylib` + `config.json` | `DYLD_INSERT_LIBRARIES`，直接执行 .app 内的 Mach-O |
 
 Linux 侧是 Rust `cdylib`。Windows 日常部署只放 `version.dll` 和 `config.json`。macOS 用 dyld 插入 dylib，不用 `open -a`，也不是把库塞进 App 包里冒充系统库。dylib 在 GitHub Actions 的 macOS runner 上编译。协议与路由决策在 `crates/agy-core`。参考仓库 [yuaotian/antigravity-proxy](https://github.com/yuaotian/antigravity-proxy) 的许可证与本仓库的 MIT 许可证相互独立；本仓库不包含其 MinHook 或 Windows C/C++ 源码。
 
-English: Linux uses `LD_PRELOAD`. Windows copies `version.dll` and `config.json` next to `Antigravity.exe`. macOS inserts `libantigravity_proxy.dylib` with `DYLD_INSERT_LIBRARIES` by executing the Mach-O inside the `.app`. See [使用说明_macOS.md](./使用说明_macOS.md). SIP and Hardened Runtime can ignore that variable; injection into the real Antigravity app was not verified here.
+English: Linux uses `LD_PRELOAD` with `libantigravity_proxy.so` and `config.json` in the same directory. Windows copies `version.dll` and `config.json` next to `Antigravity.exe`. macOS inserts `libantigravity_proxy.dylib` with `DYLD_INSERT_LIBRARIES` by executing the Mach-O inside the `.app`, and keeps `config.json` beside the dylib. See [使用说明_macOS.md](./使用说明_macOS.md). SIP and Hardened Runtime can ignore that variable; injection into the real Antigravity app was not verified here. Build and install copy a default `config.json` only when that file is absent.
 
 ## 目录索引
 - [Linux 使用说明](./使用说明_Linux.md)
@@ -34,13 +34,13 @@ English: Linux uses `LD_PRELOAD`. Windows copies `version.dll` and `config.json`
 6. **子进程**：Linux 默认继承 `LD_PRELOAD`。`child_injection=false` 时从 `exec*` / `posix_spawn*` 去掉本库。Windows 由 `CreateProcess` 钩子注入。macOS 上未受 SIP 保护的子进程继承 `DYLD_INSERT_LIBRARIES`；`child_injection=false` 时从 `execve` / `posix_spawn` 去掉本 dylib。
 7. **日志**：Linux 写到配置文件同目录的 `proxy.log`（可用 `ANTIGRAVITY_PROXY_LOG` 覆盖）。启动时若日志超过 5MB 会轮转到 `proxy.log.1`。Windows 写到 DLL 旁的 `logs\proxy-YYYYMMDD.log`。macOS 写到 dylib 旁的 `logs/`，失败则写到 `~/Library/Logs/antigravity-proxy/`。
 
-`bin/x64` 与 `bin/arm64` 的 `.so` 随 Linux 源码一起重新编译。Windows 桌面版用 `bin/windows-x64/` 里的 `version.dll` 和 `config.json`。macOS 的 dylib 由 Actions 的 macOS runner 产出，不进 Linux 交叉编译。
+`bin/x64` 与 `bin/arm64` 里是重新编译的 `.so`，旁边有一份 `config.json`。Windows 桌面版用 `bin/windows-x64/` 里的 `version.dll` 和 `config.json`。macOS 的 dylib 由 Actions 的 macOS runner 产出，工件里同时带上该目录的 `config.json`，不进 Linux 交叉编译。构建脚本只在目录里还没有 `config.json` 时从仓库根目录复制，不会盖掉已经改过的文件。
 
 ## 快速使用
 
 ### macOS
 
-在 Mac 上 `cargo build --release -p macos-proxy`，或下载 Actions 工件到 `bin/macos-arm64/`（Intel 为 `bin/macos-x64/`），然后：
+在 Mac 上 `cargo build --release -p macos-proxy`，或把 Actions 工件里的 dylib 和 `config.json` 放到 `bin/macos-arm64/`（Intel 为 `bin/macos-x64/`），然后：
 
 ```bash
 ./antigravity-proxy-macos.sh "/Applications/Antigravity.app/Contents/MacOS/Antigravity"

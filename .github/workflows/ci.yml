@@ -16,3 +16,5 @@ jobs:
         run: cargo build --release
       - name: LD_PRELOAD smoke
         run: bash scripts/smoke.sh target/release/libantigravity_proxy.so
+      - name: Staged config is present and not overwritten
+        run: bash scripts/check-stage-config.sh
