@@ -41,10 +41,10 @@ antigravity-proxy/
 │   │   └── libantigravity_proxy.so    # Linux x86_64 专用劫持库
 │   ├── arm64/
 │   │   └── libantigravity_proxy.so    # Linux AArch64 (ARM64) 专用劫持库
-│   └── windows-x64/                   # Windows 运行时，见 使用说明_Windows.md
-│       ├── version.dll
-│       ├── antigravity-proxy.exe
-│       └── config.json
+│   └── windows-x64/                   # Windows：复制 version.dll 与 config.json 即可
+│       ├── version.dll                # 放到 Antigravity.exe 旁边
+│       ├── config.json
+│       └── antigravity-proxy.exe      # 可选，目标不加载 version.dll 时再用
 ├── config.json                        # 代理与路由配置文件
 ├── config-web.html                    # 可视化配置网页工具
 ├── antigravity-proxy.sh               # 智能启动器 (自动识别 CPU 架构)
