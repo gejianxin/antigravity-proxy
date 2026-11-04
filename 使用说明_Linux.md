@@ -96,6 +96,7 @@ antigravity-proxy/
    cd /path/to/Antigravity_Linux_x64
    ./start-with-proxy.sh
    ```
+   脚本会马上返回。Antigravity 在后台继续运行，并且仍然带有 `LD_PRELOAD`。关闭这个终端不会结束它。程序自己的标准输出写到 `~/.local/state/antigravity-proxy/launch.log`。需要盯着终端时用 `./start-with-proxy.sh --foreground`。`--test` 仍在前台跑完。
 
 ---
 
@@ -104,15 +105,20 @@ antigravity-proxy/
 无论任何位置，可直接通过 `antigravity-proxy.sh` 包装启动：
 
 ```bash
-# 自动检测 Antigravity 并启动
+# 自动检测 Antigravity 并在后台启动，脚本立刻返回
 ./antigravity-proxy.sh
 
 # 或显式指定二进制路径启动
 ./antigravity-proxy.sh /opt/Antigravity/antigravity
 
-# 代理模式启动 Antigravity 命令行工具 (agy)
+# 后台启动 Antigravity 命令行工具 (agy)
 ./antigravity-proxy.sh agy
+
+# 留在当前终端前台运行（关闭终端会结束进程）
+./antigravity-proxy.sh --foreground agy
 ```
+
+在终端里运行上述启动命令时，脚本启动目标后就退出。目标进程脱离当前终端，关闭终端不会把它关掉。`LD_PRELOAD` 仍然作用在该进程上。`--test` 和 `--foreground` 保持在前台。
 
 ---
 

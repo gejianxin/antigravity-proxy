@@ -51,7 +51,7 @@ bash scripts/smoke.sh target/release/libantigravity_proxy.so
 # 2. 一键安装
 bash install.sh
 
-# 3. 启动 Antigravity
+# 3. 启动 Antigravity（后台运行，脚本立刻返回，关闭终端不会结束进程）
 ./antigravity-proxy.sh
 ```
 

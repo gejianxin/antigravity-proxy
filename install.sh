@@ -57,7 +57,8 @@ if [ -n "$TARGET_DIR" ] && [ -d "$TARGET_DIR" ]; then
     cp "$SCRIPT_DIR/antigravity-proxy.sh" "$TARGET_DIR/antigravity-proxy.sh"
     chmod +x "$TARGET_DIR/antigravity-proxy.sh"
 
-    # 创建快捷启动脚本
+    # 创建快捷启动脚本。真正的脱离终端在 antigravity-proxy.sh 里完成，
+    # 所以本脚本也会马上返回。--foreground / --test 会原样传进去。
     cat << 'EOF' > "$TARGET_DIR/start-with-proxy.sh"
 #!/bin/bash
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
