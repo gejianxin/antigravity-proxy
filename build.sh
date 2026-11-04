@@ -13,6 +13,10 @@ echo "目标: $TARGET"
 
 mkdir -p bin/x64 bin/arm64 bin/windows-x64
 
+stage_config() {
+    bash "$SCRIPT_DIR/scripts/stage-config.sh" "$@"
+}
+
 build_native() {
     if ! command -v cargo >/dev/null 2>&1; then
         echo "错误: 未找到 cargo。请先安装 Rust (https://rustup.rs)。"
@@ -22,10 +26,12 @@ build_native() {
     cargo build --release -p antigravity-proxy
     if [ "$ARCH" = "x86_64" ]; then
         cp target/release/libantigravity_proxy.so bin/x64/
-        echo " -> [成功] bin/x64/libantigravity_proxy.so"
+        stage_config bin/x64
+        echo " -> [成功] bin/x64/libantigravity_proxy.so 与 config.json"
     elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
         cp target/release/libantigravity_proxy.so bin/arm64/
-        echo " -> [成功] bin/arm64/libantigravity_proxy.so"
+        stage_config bin/arm64
+        echo " -> [成功] bin/arm64/libantigravity_proxy.so 与 config.json"
     else
         echo "已生成 target/release/libantigravity_proxy.so（未识别的架构，未复制到 bin/）"
     fi
@@ -40,7 +46,8 @@ build_arm64() {
     echo "交叉编译 Linux arm64..."
     cargo build --release --target aarch64-unknown-linux-gnu -p antigravity-proxy
     cp target/aarch64-unknown-linux-gnu/release/libantigravity_proxy.so bin/arm64/
-    echo " -> [成功] bin/arm64/libantigravity_proxy.so"
+    stage_config bin/arm64
+    echo " -> [成功] bin/arm64/libantigravity_proxy.so 与 config.json"
 }
 
 build_macos() {
@@ -62,12 +69,14 @@ build_macos() {
     fi
     mkdir -p "$dest"
     cp target/release/libantigravity_proxy.dylib "$dest/"
-    echo " -> [成功] $dest/libantigravity_proxy.dylib"
+    stage_config "$dest"
+    echo " -> [成功] $dest/libantigravity_proxy.dylib 与 config.json"
     if rustup target list --installed | grep -q 'x86_64-apple-darwin'; then
         cargo build --release --target x86_64-apple-darwin -p macos-proxy
         mkdir -p bin/macos-x64
         cp target/x86_64-apple-darwin/release/libantigravity_proxy.dylib bin/macos-x64/
-        echo " -> [成功] bin/macos-x64/libantigravity_proxy.dylib"
+        stage_config bin/macos-x64
+        echo " -> [成功] bin/macos-x64/libantigravity_proxy.dylib 与 config.json"
     fi
 }
 
@@ -82,10 +91,8 @@ build_windows() {
     cargo build --release --target x86_64-pc-windows-gnu -p windows-proxy -p windows-injector
     cp target/x86_64-pc-windows-gnu/release/version.dll bin/windows-x64/
     cp target/x86_64-pc-windows-gnu/release/antigravity-proxy.exe bin/windows-x64/
-    if [ ! -f bin/windows-x64/config.json ]; then
-        cp config.json bin/windows-x64/config.json
-    fi
-    echo " -> [成功] bin/windows-x64/version.dll"
+    stage_config bin/windows-x64
+    echo " -> [成功] bin/windows-x64/version.dll 与 config.json"
     echo " -> [成功] bin/windows-x64/antigravity-proxy.exe"
 }
 

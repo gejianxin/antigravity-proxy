@@ -8,6 +8,15 @@ $zigLdArm64 = Join-Path $rootDir "scripts\zig-ld-arm64.cmd"
 
 New-Item -ItemType Directory -Force -Path "bin\x64", "bin\arm64", "bin\windows-x64" | Out-Null
 
+function Ensure-StagedConfig([string]$outDir) {
+    New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+    $dest = Join-Path $outDir "config.json"
+    if (-not (Test-Path -LiteralPath $dest)) {
+        Copy-Item -LiteralPath "config.json" -Destination $dest
+        Write-Host "config.json -> $dest (created; existing files are not replaced)" -ForegroundColor Green
+    }
+}
+
 function Build-LinuxTarget([string]$label, [string]$triple, [string]$linker, [string]$outDir) {
     Write-Host "Compiling Rust for $label ($triple)..." -ForegroundColor Cyan
     $env:RUSTFLAGS = "-C linker=$linker"
@@ -17,7 +26,8 @@ function Build-LinuxTarget([string]$label, [string]$triple, [string]$linker, [st
         exit 1
     }
     Copy-Item -Force "target\$triple\release\libantigravity_proxy.so" "$outDir\libantigravity_proxy.so"
-    Write-Host "$label build succeeded -> $outDir/libantigravity_proxy.so" -ForegroundColor Green
+    Ensure-StagedConfig $outDir
+    Write-Host "$label build succeeded -> $outDir/libantigravity_proxy.so and config.json" -ForegroundColor Green
 }
 
 if ($Target -eq "all" -or $Target -eq "x64") {
@@ -53,10 +63,8 @@ if ($Target -eq "all" -or $Target -eq "windows") {
     }
     Copy-Item -Force "target\$winTriple\release\version.dll" "bin\windows-x64\version.dll"
     Copy-Item -Force "target\$winTriple\release\antigravity-proxy.exe" "bin\windows-x64\antigravity-proxy.exe"
-    if (-not (Test-Path "bin\windows-x64\config.json")) {
-        Copy-Item -Force "config.json" "bin\windows-x64\config.json"
-    }
-    Write-Host "Windows build succeeded -> bin/windows-x64/version.dll" -ForegroundColor Green
+    Ensure-StagedConfig "bin\windows-x64"
+    Write-Host "Windows build succeeded -> bin/windows-x64/version.dll and config.json" -ForegroundColor Green
 }
 
 Write-Host "=== Builds finished ===" -ForegroundColor Green
