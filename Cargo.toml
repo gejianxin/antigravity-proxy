@@ -1,9 +1,15 @@
+[workspace]
+members = [".", "crates/agy-core", "crates/windows-proxy", "crates/windows-injector"]
+resolver = "2"
+default-members = [".", "crates/agy-core"]
+
 [package]
 name = "antigravity-proxy"
 version = "2.5.0"
 edition = "2021"
 authors = ["Antigravity Contributors"]
-description = "Transparent network proxy interceptor for Antigravity Linux (x64 & arm64)"
+description = "Transparent network proxy for Antigravity on Linux (x64/arm64) and Windows x64"
+license = "MIT"
 
 [lib]
 name = "antigravity_proxy"

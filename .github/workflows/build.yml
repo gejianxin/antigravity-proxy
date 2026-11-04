@@ -1,0 +1,29 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linux-and-cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu,x86_64-pc-windows-gnu
+      - name: Install cross linkers
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
+      - name: Unit tests
+        run: cargo test --workspace --exclude windows-proxy --exclude windows-injector
+      - name: Linux x64
+        run: cargo build --release -p antigravity-proxy
+      - name: Linux arm64
+        run: cargo build --release --target aarch64-unknown-linux-gnu -p antigravity-proxy
+      - name: Windows x64
+        run: cargo build --release --target x86_64-pc-windows-gnu -p windows-proxy -p windows-injector
+      - name: Linux preload smoke
+        run: bash scripts/smoke.sh target/release/libantigravity_proxy.so
+
+      # Windows injection and Winsock hook tests need a Windows process.
+      # ubuntu-latest can compile version.dll, but it cannot host Antigravity.

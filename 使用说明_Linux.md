@@ -39,8 +39,12 @@ antigravity-proxy/
 ├── bin/
 │   ├── x64/
 │   │   └── libantigravity_proxy.so    # Linux x86_64 专用劫持库
-│   └── arm64/
-│       └── libantigravity_proxy.so    # Linux AArch64 (ARM64) 专用劫持库
+│   ├── arm64/
+│   │   └── libantigravity_proxy.so    # Linux AArch64 (ARM64) 专用劫持库
+│   └── windows-x64/                   # Windows 运行时，见 使用说明_Windows.md
+│       ├── version.dll
+│       ├── antigravity-proxy.exe
+│       └── config.json
 ├── config.json                        # 代理与路由配置文件
 ├── config-web.html                    # 可视化配置网页工具
 ├── antigravity-proxy.sh               # 智能启动器 (自动识别 CPU 架构)

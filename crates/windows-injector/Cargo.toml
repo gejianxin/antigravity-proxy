@@ -1,0 +1,23 @@
+[package]
+name = "windows-injector"
+version = "2.5.0"
+edition = "2021"
+authors = ["Antigravity Contributors"]
+description = "Suspended-process launcher that injects the Antigravity proxy DLL"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "antigravity-proxy"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }
