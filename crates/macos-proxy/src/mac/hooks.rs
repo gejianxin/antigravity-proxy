@@ -1,4 +1,9 @@
 //! dyld `__interpose` hooks for the BSD socket calls Antigravity uses.
+//!
+//! The real libSystem entry points are called directly. dyld does not
+//! rewrite binds inside the interposing image. `dlsym` is unsafe here: on
+//! macOS it can return this dylib's replacement and the hook recurses until
+//! the stack overflows (SIGSEGV, exit 139) before the caller prints anything.
 
 use std::ffi::{CStr, CString};
 use std::net::Ipv4Addr;
@@ -10,7 +15,7 @@ use agy_core::routing::{self, Action, DecideOpts, Endpoint, Proto};
 
 use super::child;
 use super::net;
-use super::{is_targeted, log, startup};
+use super::{is_targeted, log, try_startup};
 
 static CONFIG: OnceLock<AppConfig> = OnceLock::new();
 
@@ -34,38 +39,25 @@ extern "C" {
     fn gethostbyname(name: *const libc::c_char) -> *mut libc::hostent;
 }
 
-fn libsystem() -> *mut libc::c_void {
-    static HANDLE: OnceLock<usize> = OnceLock::new();
-    let handle = *HANDLE.get_or_init(|| unsafe {
-        let path = CString::new("/usr/lib/libSystem.B.dylib").unwrap();
-        libc::dlopen(path.as_ptr(), libc::RTLD_NOW) as usize
-    });
-    handle as *mut libc::c_void
-}
-
-/// Resolve the libSystem symbol directly. `RTLD_NEXT` can return the
-/// interposer itself and recurse until the stack overflows.
-pub fn sym(name: &str) -> usize {
-    let c = CString::new(name).unwrap_or_default();
-    unsafe { libc::dlsym(libsystem(), c.as_ptr()) as usize }
+fn trace(msg: &[u8]) {
+    unsafe {
+        if libc::getenv(b"ANTIGRAVITY_PROXY_DEBUG\0".as_ptr() as *const libc::c_char).is_null() {
+            return;
+        }
+        libc::write(2, msg.as_ptr() as *const libc::c_void, msg.len());
+    }
 }
 
 pub unsafe fn raw_connect(fd: libc::c_int, addr: *const libc::sockaddr, len: libc::socklen_t) -> libc::c_int {
-    type Fn = unsafe extern "C" fn(libc::c_int, *const libc::sockaddr, libc::socklen_t) -> libc::c_int;
-    let f: Fn = std::mem::transmute(sym("connect"));
-    f(fd, addr, len)
+    libc::connect(fd, addr, len)
 }
 
 pub(super) unsafe fn raw_send(fd: libc::c_int, buf: *const libc::c_void, len: usize, flags: libc::c_int) -> isize {
-    type Fn = unsafe extern "C" fn(libc::c_int, *const libc::c_void, usize, libc::c_int) -> isize;
-    let f: Fn = std::mem::transmute(sym("send"));
-    f(fd, buf, len, flags)
+    libc::send(fd, buf, len, flags)
 }
 
 pub(super) unsafe fn raw_recv(fd: libc::c_int, buf: *mut libc::c_void, len: usize, flags: libc::c_int) -> isize {
-    type Fn = unsafe extern "C" fn(libc::c_int, *mut libc::c_void, usize, libc::c_int) -> isize;
-    let f: Fn = std::mem::transmute(sym("recv"));
-    f(fd, buf, len, flags)
+    libc::recv(fd, buf, len, flags)
 }
 
 unsafe fn raw_getaddrinfo(
@@ -74,14 +66,7 @@ unsafe fn raw_getaddrinfo(
     hints: *const libc::addrinfo,
     res: *mut *mut libc::addrinfo,
 ) -> libc::c_int {
-    type Fn = unsafe extern "C" fn(
-        *const libc::c_char,
-        *const libc::c_char,
-        *const libc::addrinfo,
-        *mut *mut libc::addrinfo,
-    ) -> libc::c_int;
-    let f: Fn = std::mem::transmute(sym("getaddrinfo"));
-    f(node, service, hints, res)
+    libc::getaddrinfo(node, service, hints, res)
 }
 
 unsafe fn raw_sendto(
@@ -92,20 +77,7 @@ unsafe fn raw_sendto(
     addr: *const libc::sockaddr,
     addrlen: libc::socklen_t,
 ) -> isize {
-    type Fn = unsafe extern "C" fn(
-        libc::c_int,
-        *const libc::c_void,
-        usize,
-        libc::c_int,
-        *const libc::sockaddr,
-        libc::socklen_t,
-    ) -> isize;
-    let f: Fn = std::mem::transmute(sym("sendto"));
-    f(fd, buf, len, flags, addr, addrlen)
-}
-
-fn ensure() {
-    startup();
+    libc::sendto(fd, buf, len, flags, addr, addrlen)
 }
 
 pub unsafe extern "C" fn hook_getaddrinfo(
@@ -114,8 +86,8 @@ pub unsafe extern "C" fn hook_getaddrinfo(
     hints: *const libc::addrinfo,
     res: *mut *mut libc::addrinfo,
 ) -> libc::c_int {
-    ensure();
-    if node.is_null() || !is_targeted(config()) {
+    trace(b"[agy] getaddrinfo\n");
+    if node.is_null() || !try_startup() || !is_targeted(config()) {
         return raw_getaddrinfo(node, service, hints, res);
     }
     let name = match CStr::from_ptr(node).to_str() {
@@ -151,32 +123,27 @@ pub unsafe extern "C" fn hook_getaddrinfo(
 }
 
 pub unsafe extern "C" fn hook_freeaddrinfo(res: *mut libc::addrinfo) {
-    ensure();
-    type Fn = unsafe extern "C" fn(*mut libc::addrinfo);
-    let f: Fn = std::mem::transmute(sym("freeaddrinfo"));
-    f(res);
+    let _ = try_startup();
+    libc::freeaddrinfo(res);
 }
 
 pub unsafe extern "C" fn hook_gethostbyname(name: *const libc::c_char) -> *mut libc::hostent {
-    ensure();
-    type Fn = unsafe extern "C" fn(*const libc::c_char) -> *mut libc::hostent;
-    let real: Fn = std::mem::transmute(sym("gethostbyname"));
-    if name.is_null() || !is_targeted(config()) {
-        return real(name);
+    if name.is_null() || !try_startup() || !is_targeted(config()) {
+        return gethostbyname(name);
     }
     let host = match CStr::from_ptr(name).to_str() {
         Ok(s) => s,
-        Err(_) => return real(name),
+        Err(_) => return gethostbyname(name),
     };
     if !routing::should_fake_dns(config(), host) {
-        return real(name);
+        return gethostbyname(name);
     }
     let ip = fakeip::get_or_create(host);
     if ip == 0 {
-        return real(name);
+        return gethostbyname(name);
     }
     let literal = CString::new(Ipv4Addr::from(ip).to_string()).unwrap_or_default();
-    real(literal.as_ptr())
+    gethostbyname(literal.as_ptr())
 }
 
 pub unsafe extern "C" fn hook_connect(
@@ -184,8 +151,7 @@ pub unsafe extern "C" fn hook_connect(
     addr: *const libc::sockaddr,
     len: libc::socklen_t,
 ) -> libc::c_int {
-    ensure();
-    if addr.is_null() || !is_targeted(config()) {
+    if addr.is_null() || !try_startup() || !is_targeted(config()) {
         return raw_connect(fd, addr, len);
     }
     let Some(ep) = endpoint_of(addr, socket_proto(fd)) else {
@@ -220,8 +186,7 @@ pub unsafe extern "C" fn hook_sendto(
     addr: *const libc::sockaddr,
     addrlen: libc::socklen_t,
 ) -> isize {
-    ensure();
-    if addr.is_null() || !is_targeted(config()) || socket_proto(fd) != Proto::Udp {
+    if addr.is_null() || !try_startup() || !is_targeted(config()) || socket_proto(fd) != Proto::Udp {
         return raw_sendto(fd, buf, len, flags, addr, addrlen);
     }
     let Some(ep) = endpoint_of(addr, Proto::Udp) else {
@@ -274,7 +239,16 @@ pub unsafe extern "C" fn hook_posix_spawn(
     argv: *const *mut libc::c_char,
     envp: *const *mut libc::c_char,
 ) -> i32 {
-    ensure();
+    if !try_startup() {
+        return libc::posix_spawn(
+            pid,
+            path,
+            file_actions as *const libc::posix_spawn_file_actions_t,
+            attrp as *const libc::posix_spawnattr_t,
+            argv,
+            envp,
+        );
+    }
     child::spawn(pid, path, file_actions, attrp, argv, envp)
 }
 
@@ -283,7 +257,13 @@ pub unsafe extern "C" fn hook_execve(
     argv: *const *mut libc::c_char,
     envp: *const *mut libc::c_char,
 ) -> i32 {
-    ensure();
+    if !try_startup() {
+        return libc::execve(
+            path,
+            argv as *const *const libc::c_char,
+            envp as *const *const libc::c_char,
+        );
+    }
     child::execve(path, argv, envp)
 }
 
@@ -390,46 +370,23 @@ fn socket_proto(fd: libc::c_int) -> Proto {
     }
 }
 
-#[used]
-#[link_section = "__DATA,__interpose"]
-static INTERPOSE: [Interpose; 8] = [
-    Interpose {
-        replacement: hook_connect as *const (),
-        original: libc::connect as *const (),
-    },
-    Interpose {
-        replacement: hook_getaddrinfo as *const (),
-        original: libc::getaddrinfo as *const (),
-    },
-    Interpose {
-        replacement: hook_freeaddrinfo as *const (),
-        original: libc::freeaddrinfo as *const (),
-    },
-    Interpose {
-        replacement: hook_gethostbyname as *const (),
-        original: gethostbyname as *const (),
-    },
-    Interpose {
-        replacement: hook_send as *const (),
-        original: libc::send as *const (),
-    },
-    Interpose {
-        replacement: hook_recv as *const (),
-        original: libc::recv as *const (),
-    },
-    Interpose {
-        replacement: hook_sendto as *const (),
-        original: libc::sendto as *const (),
-    },
-    Interpose {
-        replacement: hook_posix_spawn as *const (),
-        original: libc::posix_spawn as *const (),
-    },
-];
+macro_rules! interpose {
+    ($name:ident => $hook:ident, $real:path) => {
+        #[used]
+        #[link_section = "__DATA,__interpose"]
+        static $name: Interpose = Interpose {
+            replacement: $hook as *const (),
+            original: $real as *const (),
+        };
+    };
+}
 
-#[used]
-#[link_section = "__DATA,__interpose"]
-static INTERPOSE_EXEC: Interpose = Interpose {
-    replacement: hook_execve as *const (),
-    original: libc::execve as *const (),
-};
+interpose!(INTERPOSE_CONNECT => hook_connect, libc::connect);
+interpose!(INTERPOSE_GETADDRINFO => hook_getaddrinfo, libc::getaddrinfo);
+interpose!(INTERPOSE_FREEADDRINFO => hook_freeaddrinfo, libc::freeaddrinfo);
+interpose!(INTERPOSE_GETHOSTBYNAME => hook_gethostbyname, gethostbyname);
+interpose!(INTERPOSE_SEND => hook_send, libc::send);
+interpose!(INTERPOSE_RECV => hook_recv, libc::recv);
+interpose!(INTERPOSE_SENDTO => hook_sendto, libc::sendto);
+interpose!(INTERPOSE_POSIX_SPAWN => hook_posix_spawn, libc::posix_spawn);
+interpose!(INTERPOSE_EXECVE => hook_execve, libc::execve);

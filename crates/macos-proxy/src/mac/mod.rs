@@ -5,6 +5,7 @@ mod net;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -14,8 +15,24 @@ use agy_core::process;
 
 static START: Once = Once::new();
 static LOG: Mutex<Option<File>> = Mutex::new(None);
+static START_DEPTH: AtomicUsize = AtomicUsize::new(0);
 
-pub fn startup() {
+/// Run `startup` once. If a hook fires again while startup is still on this
+/// call stack, return false so the hook can call libSystem directly.
+pub fn try_startup() -> bool {
+    if START.is_completed() {
+        return true;
+    }
+    if START_DEPTH.fetch_add(1, Ordering::SeqCst) != 0 {
+        START_DEPTH.fetch_sub(1, Ordering::SeqCst);
+        return false;
+    }
+    startup();
+    START_DEPTH.fetch_sub(1, Ordering::SeqCst);
+    START.is_completed()
+}
+
+fn startup() {
     START.call_once(|| {
         let dir = dylib_dir();
         let (cfg, cfg_path) = load_config(dir.as_deref());

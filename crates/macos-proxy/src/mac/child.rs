@@ -33,20 +33,21 @@ pub unsafe fn execve(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> i32 {
-    type Fn = unsafe extern "C" fn(*const c_char, *const *mut c_char, *const *mut c_char) -> i32;
-    let fp = hooks::sym("execve");
-    if fp == 0 {
-        set_errno(libc::ENOENT);
-        return -1;
-    }
-    let f: Fn = std::mem::transmute(fp);
     if hooks::config().child_injection {
-        return f(path, argv, envp);
+        return libc::execve(
+            path,
+            argv as *const *const c_char,
+            envp as *const *const c_char,
+        );
     }
     let owned = filtered_env(envp);
     let mut ptrs: Vec<*mut c_char> = owned.iter().map(|s| s.as_ptr() as *mut c_char).collect();
     ptrs.push(std::ptr::null_mut());
-    f(path, argv, ptrs.as_ptr())
+    libc::execve(
+        path,
+        argv as *const *const c_char,
+        ptrs.as_ptr() as *const *const c_char,
+    )
 }
 
 unsafe fn call(
@@ -57,20 +58,14 @@ unsafe fn call(
     argv: *const *mut c_char,
     envp: *const *mut c_char,
 ) -> i32 {
-    type Fn = unsafe extern "C" fn(
-        *mut i32,
-        *const c_char,
-        *const libc::c_void,
-        *const libc::c_void,
-        *const *mut c_char,
-        *const *mut c_char,
-    ) -> i32;
-    let fp = hooks::sym("posix_spawn");
-    if fp == 0 {
-        return libc::EAGAIN;
-    }
-    let f: Fn = std::mem::transmute(fp);
-    f(pid, path, file_actions, attrp, argv, envp)
+    libc::posix_spawn(
+        pid,
+        path,
+        file_actions as *const libc::posix_spawn_file_actions_t,
+        attrp as *const libc::posix_spawnattr_t,
+        argv,
+        envp,
+    )
 }
 
 unsafe fn filtered_env(envp: *const *mut c_char) -> Vec<CString> {
@@ -120,10 +115,4 @@ fn push_pair(out: &mut Vec<CString>, key: &str, value: &str) {
 
 fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
-}
-
-fn set_errno(code: i32) {
-    unsafe {
-        *libc::__error() = code;
-    }
 }
