@@ -174,28 +174,28 @@ fn detour_for(name: &str) -> Option<usize> {
 
 fn detour_addr(name: &str) -> Option<usize> {
     Some(match name {
-        "connect" => hook_connect as usize,
-        "WSAConnect" => hook_wsa_connect as usize,
-        "getaddrinfo" => hook_getaddrinfo as usize,
-        "GetAddrInfoW" => hook_getaddrinfo_w as usize,
-        "gethostbyname" => hook_gethostbyname as usize,
-        "send" => hook_send as usize,
-        "recv" => hook_recv as usize,
-        "sendto" => hook_sendto as usize,
-        "recvfrom" => hook_recvfrom as usize,
-        "closesocket" => hook_closesocket as usize,
-        "WSAIoctl" => hook_wsaioctl as usize,
-        "socket" => hook_socket as usize,
-        "WSASendTo" => hook_wsa_send_to as usize,
-        "WSARecvFrom" => hook_wsa_recv_from as usize,
-        "CreateProcessW" => hook_create_process_w as usize,
-        "CreateProcessA" => hook_create_process_a as usize,
-        "GetProcAddress" => hook_get_proc_address as usize,
-        "GetQueuedCompletionStatus" => hook_gqcs as usize,
-        "GetQueuedCompletionStatusEx" => hook_gqcs_ex as usize,
-        "LoadLibraryW" => hook_load_library_w as usize,
-        "LoadLibraryA" => hook_load_library_a as usize,
-        "LoadLibraryExW" => hook_load_library_ex_w as usize,
+        "connect" => hook_connect as *const () as usize,
+        "WSAConnect" => hook_wsa_connect as *const () as usize,
+        "getaddrinfo" => hook_getaddrinfo as *const () as usize,
+        "GetAddrInfoW" => hook_getaddrinfo_w as *const () as usize,
+        "gethostbyname" => hook_gethostbyname as *const () as usize,
+        "send" => hook_send as *const () as usize,
+        "recv" => hook_recv as *const () as usize,
+        "sendto" => hook_sendto as *const () as usize,
+        "recvfrom" => hook_recvfrom as *const () as usize,
+        "closesocket" => hook_closesocket as *const () as usize,
+        "WSAIoctl" => hook_wsaioctl as *const () as usize,
+        "socket" => hook_socket as *const () as usize,
+        "WSASendTo" => hook_wsa_send_to as *const () as usize,
+        "WSARecvFrom" => hook_wsa_recv_from as *const () as usize,
+        "CreateProcessW" => hook_create_process_w as *const () as usize,
+        "CreateProcessA" => hook_create_process_a as *const () as usize,
+        "GetProcAddress" => hook_get_proc_address as *const () as usize,
+        "GetQueuedCompletionStatus" => hook_gqcs as *const () as usize,
+        "GetQueuedCompletionStatusEx" => hook_gqcs_ex as *const () as usize,
+        "LoadLibraryW" => hook_load_library_w as *const () as usize,
+        "LoadLibraryA" => hook_load_library_a as *const () as usize,
+        "LoadLibraryExW" => hook_load_library_ex_w as *const () as usize,
         _ => return None,
     })
 }
@@ -922,11 +922,60 @@ unsafe fn recv_exact(s: SOCKET, buf: &mut [u8], timeout_ms: u32) -> bool {
     true
 }
 
+unsafe fn socks5_authenticate(s: SOCKET, cfg: &AppConfig, timeout_ms: u32) -> bool {
+    let has_auth = cfg.proxy.has_auth();
+    let greeting = proto::socks5_greeting_for_auth(has_auth);
+    if !send_all(s, &greeting, timeout_ms) {
+        return false;
+    }
+    let mut greet = [0u8; 2];
+    if !recv_exact(s, &mut greet, timeout_ms) {
+        log::warn(&format!(
+            "SOCKS5 读取认证响应失败{}",
+            proto::socks5_mismatch_hint_for_io()
+        ));
+        return false;
+    }
+    let choice = match proto::socks5_check_greeting(&greet, has_auth) {
+        Ok(c) => c,
+        Err(msg) => {
+            log::warn(&msg);
+            return false;
+        }
+    };
+    if choice == proto::Socks5AuthChoice::UserPass {
+        let up_req = match proto::socks5_userpass_request(&cfg.proxy.username, &cfg.proxy.password) {
+            Ok(b) => b,
+            Err(msg) => {
+                log::warn(&msg);
+                return false;
+            }
+        };
+        if !send_all(s, &up_req, timeout_ms) {
+            return false;
+        }
+        let mut up_resp = [0u8; 2];
+        if !recv_exact(s, &mut up_resp, timeout_ms) {
+            log::warn("SOCKS5 读取账密认证响应失败");
+            return false;
+        }
+        if let Err(msg) = proto::socks5_userpass_ok(&up_resp) {
+            log::warn(&msg);
+            return false;
+        }
+    }
+    true
+}
+
 unsafe fn handshake(s: SOCKET, host: &str, port: u16, timeout_ms: u32) -> bool {
     let cfg = config();
     if cfg.proxy.is_http() {
         let authority = format!("{host}:{port}");
-        let req = proto::http_connect_request(&authority);
+        let req = proto::http_connect_request_with_auth(
+            &authority,
+            &cfg.proxy.username,
+            &cfg.proxy.password,
+        );
         if !send_all(s, req.as_bytes(), timeout_ms) {
             return false;
         }
@@ -934,6 +983,10 @@ unsafe fn handshake(s: SOCKET, host: &str, port: u16, timeout_ms: u32) -> bool {
         let mut byte = [0u8; 1];
         while buf.len() < 2048 {
             if !recv_exact(s, &mut byte, timeout_ms) {
+                log::warn(&format!(
+                    "HTTP CONNECT 接收响应失败{}",
+                    proto::http_mismatch_hint_for_io()
+                ));
                 return false;
             }
             buf.push(byte[0]);
@@ -948,12 +1001,7 @@ unsafe fn handshake(s: SOCKET, host: &str, port: u16, timeout_ms: u32) -> bool {
         }
         return false;
     }
-    if !send_all(s, &proto::socks5_greeting(), timeout_ms) {
-        return false;
-    }
-    let mut greet = [0u8; 2];
-    if !recv_exact(s, &mut greet, timeout_ms) || !proto::socks5_greeting_ok(&greet) {
-        log::warn("SOCKS5 握手失败");
+    if !socks5_authenticate(s, cfg, timeout_ms) {
         return false;
     }
     let target = SocksTarget::Domain(host.to_string());
@@ -1025,6 +1073,9 @@ fn ensure_udp(s: SOCKET) -> Result<(), ()> {
     {
         return Ok(());
     }
+    if agy_core::global_udp_backoff().is_backed_off() {
+        return Err(());
+    }
     let cfg = config();
     let ip: Ipv4Addr = cfg.proxy.host.parse().map_err(|_| ())?;
     unsafe {
@@ -1042,16 +1093,15 @@ fn ensure_udp(s: SOCKET) -> Result<(), ()> {
             return Err(());
         }
         let timeout = cfg.timeout.connect.max(1000);
-        if !send_all(control, &proto::socks5_greeting(), timeout)
-            || !{
-                let mut g = [0u8; 2];
-                recv_exact(control, &mut g, timeout) && proto::socks5_greeting_ok(&g)
-            }
+        if !socks5_authenticate(control, cfg, timeout)
             || !send_all(control, &proto::socks5_udp_associate_request(), timeout)
         {
             type CloseFn = unsafe extern "system" fn(SOCKET) -> i32;
             let close: CloseFn = std::mem::transmute(api().closesocket);
             close(control);
+            if agy_core::global_udp_backoff().record_failure() {
+                log::warn("[UDP] SOCKS5 UDP Associate 失败，60 秒内不再重复尝试（QUIC 将自动回落 TCP，或在代理软件开启 UDP）");
+            }
             return Err(());
         }
         let mut hdr = [0u8; 4];
@@ -1059,8 +1109,12 @@ fn ensure_udp(s: SOCKET) -> Result<(), ()> {
             type CloseFn = unsafe extern "system" fn(SOCKET) -> i32;
             let close: CloseFn = std::mem::transmute(api().closesocket);
             close(control);
+            if agy_core::global_udp_backoff().record_failure() {
+                log::warn("[UDP] SOCKS5 UDP Associate 被拒绝，60 秒内不再重复尝试（QUIC 将自动回落 TCP，或在代理软件开启 UDP）");
+            }
             return Err(());
         }
+        agy_core::global_udp_backoff().record_success();
         let mut domain_len = None;
         if hdr[3] == 0x03 {
             let mut len = [0u8; 1];
@@ -1511,7 +1565,7 @@ pub unsafe extern "system" fn hook_wsaioctl(
         if api().connect_ex == 0 {
             // The captured pointer is preferred; keep the provider pointer if startup missed it.
         }
-        *slot = hook_connect_ex as usize;
+        *slot = hook_connect_ex as *const () as usize;
     }
     rc
 }
@@ -1828,9 +1882,11 @@ unsafe fn spawn(
     } else {
         exe_name_a(app as *const u8, cmd as *const u8)
     };
+    let acp_compat = process::is_agy_acp_server(&super::current_process_name())
+        && process::is_acp_chain_child(&exe);
     let inject_this = cfg.child_injection
         && !process::is_excluded(&exe, cfg)
-        && process::is_targeted(&exe, cfg, HostPlatform::Windows, false);
+        && (process::is_targeted(&exe, cfg, HostPlatform::Windows, false) || acp_compat);
     if inject_this {
         let dll = dll_path();
         match inject::inject_dll((*info).hProcess, &dll) {

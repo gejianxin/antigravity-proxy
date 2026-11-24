@@ -66,15 +66,16 @@ pub fn initialize() {
     }
     let proc_name = process::current_process_name();
     log_info!("==================================================");
-    log_info!("Antigravity-Proxy Linux (Rust v2.5) 已加载");
+    log_info!("Antigravity-Proxy Linux (Rust v2.6) 已加载");
     log_info!("目标进程: {} (PID={})", proc_name, unsafe {
         libc::getpid()
     });
     log_info!(
-        "代理配置: {}://{}:{}",
+        "代理配置: {}://{}:{}{}",
         cfg.proxy.r#type,
         cfg.proxy.host,
-        cfg.proxy.port
+        cfg.proxy.port,
+        cfg.proxy.auth_log_suffix()
     );
     log_info!(
         "配置文件: {}",

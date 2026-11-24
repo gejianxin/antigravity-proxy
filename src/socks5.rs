@@ -143,28 +143,57 @@ fn sockaddr_host_port(addr: *const libc::sockaddr) -> Result<(String, u16)> {
     ))
 }
 
+fn socks5_authenticate(
+    fd: libc::c_int,
+    username: &str,
+    password: &str,
+    send_timeout_ms: u32,
+    recv_timeout_ms: u32,
+) -> Result<()> {
+    let has_auth = !username.is_empty() || !password.is_empty();
+    let greeting = agy_core::proto::socks5_greeting_for_auth(has_auth);
+    send_all(fd, &greeting, send_timeout_ms)?;
+
+    let mut greeting_resp = [0u8; 2];
+    if let Err(err) = recv_exact(fd, &mut greeting_resp, recv_timeout_ms) {
+        let hint = match err.kind() {
+            ErrorKind::TimedOut | ErrorKind::ConnectionReset | ErrorKind::UnexpectedEof => {
+                agy_core::proto::socks5_mismatch_hint_for_io()
+            }
+            _ => "",
+        };
+        return Err(Error::new(
+            err.kind(),
+            format!("SOCKS5 读取认证响应失败: {err}{hint}"),
+        ));
+    }
+
+    let choice = agy_core::proto::socks5_check_greeting(&greeting_resp, has_auth)
+        .map_err(|msg| Error::new(ErrorKind::PermissionDenied, msg))?;
+
+    if choice == agy_core::proto::Socks5AuthChoice::UserPass {
+        let up_req = agy_core::proto::socks5_userpass_request(username, password)
+            .map_err(|msg| Error::new(ErrorKind::InvalidInput, msg))?;
+        send_all(fd, &up_req, send_timeout_ms)?;
+        let mut up_resp = [0u8; 2];
+        recv_exact(fd, &mut up_resp, recv_timeout_ms)?;
+        agy_core::proto::socks5_userpass_ok(&up_resp)
+            .map_err(|msg| Error::new(ErrorKind::PermissionDenied, msg))?;
+    }
+    Ok(())
+}
+
 pub fn socks5_handshake(
     fd: libc::c_int,
     dest_host: Option<&str>,
     dest_port: u16,
     orig_addr: *const libc::sockaddr,
+    username: &str,
+    password: &str,
     send_timeout_ms: u32,
     recv_timeout_ms: u32,
 ) -> Result<()> {
-    let greeting = [0x05u8, 0x01, 0x00];
-    send_all(fd, &greeting, send_timeout_ms)?;
-
-    let mut greeting_resp = [0u8; 2];
-    recv_exact(fd, &mut greeting_resp, recv_timeout_ms)?;
-    if greeting_resp[0] != 0x05 || greeting_resp[1] != 0x00 {
-        return Err(Error::new(
-            ErrorKind::PermissionDenied,
-            format!(
-                "SOCKS5 server rejected auth: {:02X} {:02X}",
-                greeting_resp[0], greeting_resp[1]
-            ),
-        ));
-    }
+    socks5_authenticate(fd, username, password, send_timeout_ms, recv_timeout_ms)?;
 
     let mut req = vec![0x05, 0x01, 0x00];
     if let Some(host) = dest_host {
@@ -222,19 +251,12 @@ pub struct UdpRelay {
 /// A zero bind address (`0.0.0.0:0`) is replaced with the TCP peer address.
 pub fn udp_associate(
     fd: libc::c_int,
+    username: &str,
+    password: &str,
     send_timeout_ms: u32,
     recv_timeout_ms: u32,
 ) -> Result<UdpRelay> {
-    let greeting = [0x05u8, 0x01, 0x00];
-    send_all(fd, &greeting, send_timeout_ms)?;
-    let mut greeting_resp = [0u8; 2];
-    recv_exact(fd, &mut greeting_resp, recv_timeout_ms)?;
-    if greeting_resp[0] != 0x05 || greeting_resp[1] != 0x00 {
-        return Err(Error::new(
-            ErrorKind::PermissionDenied,
-            "SOCKS5 UDP associate authentication was rejected",
-        ));
-    }
+    socks5_authenticate(fd, username, password, send_timeout_ms, recv_timeout_ms)?;
 
     let req = [0x05u8, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0];
     send_all(fd, &req, send_timeout_ms)?;

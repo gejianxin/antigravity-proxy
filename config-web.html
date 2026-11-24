@@ -395,6 +395,30 @@
                   <div class="field-error" data-error-for="proxy.type"></div>
                 </div>
 
+                <div class="field">
+                  <label class="field-label" for="proxy_username">
+                    <span class="font-mono">proxy.username</span>
+                    <span class="tip">
+                      <i class="fa-solid fa-circle-info"></i>
+                      <span class="tip-pop">作用：代理身份认证用户名（SOCKS5 RFC 1929 / HTTP Basic Auth）。免密代理留空即可。</span>
+                    </span>
+                  </label>
+                  <input id="proxy_username" class="field-input" type="text" data-bind="proxy.username" placeholder="可选，免密代理留空" autocomplete="off" />
+                  <div class="field-error" data-error-for="proxy.username"></div>
+                </div>
+
+                <div class="field">
+                  <label class="field-label" for="proxy_password">
+                    <span class="font-mono">proxy.password</span>
+                    <span class="tip">
+                      <i class="fa-solid fa-circle-info"></i>
+                      <span class="tip-pop">作用：代理身份认证密码。免密代理留空即可（日志中将自动脱敏为 ***）。</span>
+                    </span>
+                  </label>
+                  <input id="proxy_password" class="field-input" type="password" data-bind="proxy.password" placeholder="可选，免密代理留空" autocomplete="off" />
+                  <div class="field-error" data-error-for="proxy.password"></div>
+                </div>
+
                 <!-- 快速填充 -->
                 <div class="field md:col-span-2">
                   <label class="field-label">
@@ -1541,7 +1565,7 @@
             arch: "x64",
           },
           log_level: "info",
-          proxy: { host: "127.0.0.1", port: 7890, type: "socks5" },
+          proxy: { host: "127.0.0.1", port: 7898, type: "socks5", username: "", password: "" },
           fake_ip: { enabled: true, cidr: "198.18.0.0/15" },
           timeout: { connect: 5000, send: 5000, recv: 5000 },
           updates: {
@@ -1566,7 +1590,7 @@
           child_injection: true,
           child_injection_mode: "filtered",
           child_injection_exclude: [],
-          target_processes: ["antigravity", "language_server", "agy", "node", "agy.exe", "language_server.exe", "language_server_windows", "Antigravity.exe", "Antigravity IDE.exe", "node.exe"],
+          target_processes: ["antigravity", "language_server", "agy", "agy_acp_server", "localharness_external", "node", "agy.exe", "agy_acp_server.exe", "localharness_external.exe", "language_server.exe", "language_server_windows", "Antigravity.exe", "Antigravity IDE.exe", "node.exe"],
           proxy_rules: {
             allowed_ports: [80, 443],
             dns_mode: "direct",
@@ -1632,6 +1656,8 @@
           const p = j.proxy && typeof j.proxy === "object" ? j.proxy : {};
           out.proxy.host = trim(typeof p.host === "string" ? p.host : base.proxy.host) || base.proxy.host;
           out.proxy.type = normalizeEnum(p.type, ["socks5", "http"], base.proxy.type);
+          out.proxy.username = typeof p.username === "string" ? p.username : (typeof p.user === "string" ? p.user : base.proxy.username);
+          out.proxy.password = typeof p.password === "string" ? p.password : (typeof p.pass === "string" ? p.pass : base.proxy.password);
           {
             const port = normalizeInt(p.port, base.proxy.port);
             // 对齐后端：允许 0（禁用代理）；<0 或 >65535 回退 7890
@@ -1770,6 +1796,8 @@
           "proxy.host",
           "proxy.port",
           "proxy.type",
+          "proxy.username",
+          "proxy.password",
           "fake_ip.enabled",
           "fake_ip.cidr",
           "timeout.connect",
@@ -1816,6 +1844,8 @@
           "proxy.host",
           "proxy.port",
           "proxy.type",
+          "proxy.username",
+          "proxy.password",
           "fake_ip.enabled",
           "fake_ip.cidr",
           "timeout.connect",
@@ -2018,6 +2048,8 @@
           outProxy.host = state.form.proxy.host;
           outProxy.port = state.form.proxy.port;
           outProxy.type = state.form.proxy.type;
+          outProxy.username = state.form.proxy.username || "";
+          outProxy.password = state.form.proxy.password || "";
 
           // fake_ip
           const outFakeIp = ensureObjIn(out, "fake_ip");

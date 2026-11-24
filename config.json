@@ -3,7 +3,10 @@
   "_version": "2.5-linux",
   "_build": {
     "platform": "linux",
-    "supported_arch": ["x86_64", "aarch64"]
+    "supported_arch": [
+      "x86_64",
+      "aarch64"
+    ]
   },
   "log_level": "info",
   "traffic_logging": false,
@@ -25,12 +28,16 @@
     "language_server_linux_x64",
     "language_server_linux_arm64",
     "agy",
-    "node"
+    "node",
+    "agy_acp_server",
+    "localharness_external"
   ],
   "proxy": {
     "host": "127.0.0.1",
     "port": 7898,
-    "type": "socks5"
+    "type": "socks5",
+    "username": "",
+    "password": ""
   },
   "fake_ip": {
     "enabled": true,

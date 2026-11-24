@@ -7,12 +7,129 @@ pub enum SocksTarget {
     V6([u8; 16]),
 }
 
+pub const SOCKS5_AUTH_NONE: u8 = 0x00;
+pub const SOCKS5_AUTH_USERPASS: u8 = 0x02;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Socks5AuthChoice {
+    None,
+    UserPass,
+}
+
+pub fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = if chunk.len() > 1 { chunk[1] } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] } else { 0 };
+        out.push(TABLE[(b0 >> 2) as usize] as char);
+        out.push(TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(b2 & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
 pub fn socks5_greeting() -> [u8; 3] {
-    [0x05, 0x01, 0x00]
+    [0x05, 0x01, SOCKS5_AUTH_NONE]
+}
+
+pub fn socks5_greeting_for_auth(has_auth: bool) -> Vec<u8> {
+    if has_auth {
+        vec![0x05, 0x02, SOCKS5_AUTH_NONE, SOCKS5_AUTH_USERPASS]
+    } else {
+        vec![0x05, 0x01, SOCKS5_AUTH_NONE]
+    }
 }
 
 pub fn socks5_greeting_ok(resp: &[u8]) -> bool {
-    resp.len() >= 2 && resp[0] == 0x05 && resp[1] == 0x00
+    resp.len() >= 2 && resp[0] == 0x05 && resp[1] == SOCKS5_AUTH_NONE
+}
+
+pub fn socks5_check_greeting(resp: &[u8], has_auth: bool) -> Result<Socks5AuthChoice, String> {
+    if resp.len() < 2 {
+        return Err("SOCKS5 认证响应过短".into());
+    }
+    if resp[0] != 0x05 {
+        if resp[0] == b'H' {
+            return Err(
+                "SOCKS5 认证响应协议版本无效 (首字节 'H')：对端返回 HTTP 响应，该端口可能是 HTTP 代理端口，请把 proxy.type 改为 http 或改用混合/SOCKS5 端口"
+                    .into(),
+            );
+        }
+        return Err(format!(
+            "SOCKS5 认证响应协议版本无效: VER=0x{:02X}, METHOD=0x{:02X}",
+            resp[0], resp[1]
+        ));
+    }
+    match resp[1] {
+        SOCKS5_AUTH_NONE => Ok(Socks5AuthChoice::None),
+        SOCKS5_AUTH_USERPASS => {
+            if has_auth {
+                Ok(Socks5AuthChoice::UserPass)
+            } else {
+                Err(
+                    "SOCKS5 代理要求用户名密码认证 (METHOD=0x02)，请在 config.json 中配置 proxy.username 和 proxy.password"
+                        .into(),
+                )
+            }
+        }
+        0xFF => {
+            if has_auth {
+                Err("SOCKS5 代理拒绝协商认证方式 (METHOD=0xFF)".into())
+            } else {
+                Err(
+                    "SOCKS5 代理拒绝免密连接 (METHOD=0xFF)，该代理可能需要认证，请在 config.json 中配置 proxy.username 和 proxy.password"
+                        .into(),
+                )
+            }
+        }
+        other => Err(format!("SOCKS5 不支持的认证方式: METHOD=0x{other:02X}")),
+    }
+}
+
+pub fn socks5_userpass_request(username: &str, password: &str) -> Result<Vec<u8>, String> {
+    let u = username.as_bytes();
+    let p = password.as_bytes();
+    if u.len() > 255 || p.len() > 255 {
+        return Err("SOCKS5 用户名或密码长度不能超过 255 字节".into());
+    }
+    let mut buf = Vec::with_capacity(3 + u.len() + p.len());
+    buf.push(0x01); // RFC 1929 subnegotiation version
+    buf.push(u.len() as u8);
+    buf.extend_from_slice(u);
+    buf.push(p.len() as u8);
+    buf.extend_from_slice(p);
+    Ok(buf)
+}
+
+pub fn socks5_userpass_ok(resp: &[u8]) -> Result<(), String> {
+    if resp.len() < 2 {
+        return Err("SOCKS5 账密认证响应过短".into());
+    }
+    if resp[0] != 0x01 {
+        return Err(format!("SOCKS5 账密认证响应版本无效: 0x{:02X}", resp[0]));
+    }
+    if resp[1] != 0x00 {
+        return Err(format!(
+            "SOCKS5 用户名或密码认证失败 (status=0x{:02X})，请检查 config.json 中的 proxy.username 和 proxy.password",
+            resp[1]
+        ));
+    }
+    Ok(())
+}
+
+pub fn socks5_mismatch_hint_for_io() -> &'static str {
+    "（提示：代理未按 SOCKS5 应答，该端口可能是 HTTP 代理端口：请把 proxy.type 改为 http，或改用代理软件的 SOCKS5 / 混合端口）"
 }
 
 pub fn socks5_request(cmd: u8, target: &SocksTarget, port: u16) -> Vec<u8> {
@@ -138,13 +255,34 @@ pub fn socks5_udp_unwrap(packet: &[u8]) -> Option<(SocksTarget, u16, &[u8])> {
 }
 
 pub fn http_connect_request(authority: &str) -> String {
-    format!(
-        "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: Antigravity-Proxy-Rust/2.5\r\nProxy-Connection: Keep-Alive\r\n\r\n"
-    )
+    http_connect_request_with_auth(authority, "", "")
+}
+
+pub fn http_connect_request_with_auth(authority: &str, username: &str, password: &str) -> String {
+    let mut req = format!(
+        "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nUser-Agent: Antigravity-Proxy-Rust/2.6\r\nProxy-Connection: Keep-Alive\r\n"
+    );
+    if !username.is_empty() || !password.is_empty() {
+        let cred = format!("{username}:{password}");
+        let encoded = base64_encode(cred.as_bytes());
+        req.push_str(&format!("Proxy-Authorization: Basic {encoded}\r\n"));
+    }
+    req.push_str("\r\n");
+    req
+}
+
+pub fn http_mismatch_hint_for_io() -> &'static str {
+    "（提示：代理收到 HTTP CONNECT 后断开或无应答，该端口可能是 SOCKS5 端口：请把 proxy.type 改为 socks5，或改用代理软件的 HTTP / 混合端口）"
 }
 
 /// `Ok(true)` once headers end in a 2xx status. `Ok(false)` if headers are incomplete.
 pub fn http_connect_status(buf: &[u8]) -> Result<bool, String> {
+    if !buf.is_empty() && buf[0] == 0x05 {
+        return Err(
+            "HTTP CONNECT 失败：该端口按 SOCKS5 协议应答 (0x05)，是 SOCKS5 端口，请把 proxy.type 改为 socks5"
+                .into(),
+        );
+    }
     if !buf.windows(4).any(|w| w == b"\r\n\r\n") {
         return Ok(false);
     }
@@ -160,6 +298,10 @@ pub fn http_connect_status(buf: &[u8]) -> Result<bool, String> {
         .map_err(|_| format!("HTTP CONNECT rejected: {line}"))?;
     if (200..300).contains(&code) {
         Ok(true)
+    } else if code == 407 {
+        Err(format!(
+            "HTTP CONNECT 代理需要身份认证或认证失败 (407 Proxy Authentication Required: {line})，请检查 config.json 中的 proxy.username 和 proxy.password"
+        ))
     } else {
         Err(format!("HTTP CONNECT rejected: {line}"))
     }
@@ -183,6 +325,47 @@ mod tests {
     }
 
     #[test]
+    fn socks5_auth_and_mismatch_hints() {
+        assert_eq!(socks5_greeting_for_auth(false), vec![0x05, 0x01, 0x00]);
+        assert_eq!(socks5_greeting_for_auth(true), vec![0x05, 0x02, 0x00, 0x02]);
+        assert_eq!(
+            socks5_check_greeting(&[0x05, 0x00], true).unwrap(),
+            Socks5AuthChoice::None
+        );
+        assert_eq!(
+            socks5_check_greeting(&[0x05, 0x02], true).unwrap(),
+            Socks5AuthChoice::UserPass
+        );
+        assert!(socks5_check_greeting(&[0x05, 0x02], false).is_err());
+
+        let http_err = socks5_check_greeting(b"HT", false).unwrap_err();
+        assert!(http_err.contains("HTTP"));
+
+        let up = socks5_userpass_request("alice", "s3cr3t").unwrap();
+        assert_eq!(up, b"\x01\x05alice\x06s3cr3t");
+        assert!(socks5_userpass_ok(&[0x01, 0x00]).is_ok());
+        assert!(socks5_userpass_ok(&[0x01, 0x01]).is_err());
+    }
+
+    #[test]
+    fn base64_and_http_basic_auth() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"alice:s3cr3t"), "YWxpY2U6czNjcjN0");
+
+        let req = http_connect_request_with_auth("example.com:443", "alice", "s3cr3t");
+        assert!(req.contains("Proxy-Authorization: Basic YWxpY2U6czNjcjN0\r\n"));
+
+        let err_407 = http_connect_status(b"HTTP/1.1 407 Proxy Auth Required\r\n\r\n").unwrap_err();
+        assert!(err_407.contains("407"));
+
+        let err_socks = http_connect_status(&[0x05, 0x00]).unwrap_err();
+        assert!(err_socks.contains("SOCKS5"));
+    }
+
+    #[test]
     fn udp_packet_roundtrip() {
         let pkt = socks5_udp_packet(&SocksTarget::V4([1, 2, 3, 4]), 443, b"quic");
         let (target, port, payload) = socks5_udp_unwrap(&pkt).unwrap();
@@ -195,6 +378,7 @@ mod tests {
     fn http_connect_parses_200() {
         let req = http_connect_request("example.com:443");
         assert!(req.starts_with("CONNECT example.com:443 HTTP/1.1\r\n"));
+        assert!(!req.contains("Proxy-Authorization:"));
         assert_eq!(
             http_connect_status(b"HTTP/1.1 200 Connection Established\r\n\r\n").unwrap(),
             true

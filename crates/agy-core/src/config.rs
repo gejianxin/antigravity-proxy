@@ -77,10 +77,14 @@ pub fn default_target_processes(platform: HostPlatform) -> Vec<String> {
             "language_server_linux_x64".to_string(),
             "language_server_linux_arm64".to_string(),
             "agy".to_string(),
+            "agy_acp_server".to_string(),
+            "localharness_external".to_string(),
             "node".to_string(),
         ],
         HostPlatform::Windows => vec![
             "agy.exe".to_string(),
+            "agy_acp_server.exe".to_string(),
+            "localharness_external.exe".to_string(),
             "language_server.exe".to_string(),
             "language_server_windows".to_string(),
             "Antigravity.exe".to_string(),
@@ -92,6 +96,8 @@ pub fn default_target_processes(platform: HostPlatform) -> Vec<String> {
             "language_server".to_string(),
             "language_server_macos".to_string(),
             "agy".to_string(),
+            "agy_acp_server".to_string(),
+            "localharness_external".to_string(),
             "node".to_string(),
         ],
     }
@@ -105,6 +111,10 @@ pub struct ProxyConfig {
     pub port: u16,
     #[serde(default = "default_proxy_type")]
     pub r#type: String,
+    #[serde(default, alias = "user")]
+    pub username: String,
+    #[serde(default, alias = "pass")]
+    pub password: String,
 }
 
 impl Default for ProxyConfig {
@@ -113,6 +123,8 @@ impl Default for ProxyConfig {
             host: default_proxy_host(),
             port: default_proxy_port(),
             r#type: default_proxy_type(),
+            username: String::new(),
+            password: String::new(),
         }
     }
 }
@@ -125,6 +137,26 @@ impl ProxyConfig {
 
     pub fn is_socks5(&self) -> bool {
         !self.is_http()
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.port > 0 && !self.host.trim().is_empty()
+    }
+
+    pub fn has_auth(&self) -> bool {
+        !self.username.is_empty() || !self.password.is_empty()
+    }
+
+    pub fn auth_log_suffix(&self) -> String {
+        if !self.has_auth() {
+            return String::new();
+        }
+        let user = if self.username.is_empty() {
+            "(none)"
+        } else {
+            self.username.as_str()
+        };
+        format!(", auth={user}:***")
     }
 }
 

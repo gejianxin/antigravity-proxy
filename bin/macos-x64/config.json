@@ -5,19 +5,42 @@
   "traffic_logging": false,
   "child_injection": true,
   "child_injection_mode": "filtered",
-  "child_injection_exclude": ["git", "bash", "sh", "zsh"],
+  "child_injection_exclude": [
+    "git",
+    "bash",
+    "sh",
+    "zsh"
+  ],
   "target_processes": [
     "Antigravity",
     "language_server",
     "language_server_macos",
     "agy",
-    "node"
+    "node",
+    "agy_acp_server",
+    "localharness_external"
   ],
-  "proxy": { "host": "127.0.0.1", "port": 7898, "type": "socks5" },
-  "fake_ip": { "enabled": true, "cidr": "198.18.0.0/15" },
-  "timeout": { "connect": 5000, "send": 5000, "recv": 5000 },
+  "proxy": {
+    "host": "127.0.0.1",
+    "port": 7898,
+    "type": "socks5",
+    "username": "",
+    "password": ""
+  },
+  "fake_ip": {
+    "enabled": true,
+    "cidr": "198.18.0.0/15"
+  },
+  "timeout": {
+    "connect": 5000,
+    "send": 5000,
+    "recv": 5000
+  },
   "proxy_rules": {
-    "allowed_ports": [80, 443],
+    "allowed_ports": [
+      80,
+      443
+    ],
     "dns_mode": "direct",
     "ipv6_mode": "proxy",
     "udp_mode": "auto",

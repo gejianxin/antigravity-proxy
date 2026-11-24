@@ -103,7 +103,7 @@ pub fn effective_udp_action(cfg: &AppConfig, opts: DecideOpts) -> UdpAction {
 /// Whether `getaddrinfo` should hand out a FakeIP. The port whitelist is applied
 /// later, at connect time, so a lookup with no service still receives a mapping.
 pub fn should_fake_dns(cfg: &AppConfig, domain: &str) -> bool {
-    if !cfg.fake_ip.enabled || domain.is_empty() {
+    if !cfg.fake_ip.enabled || !cfg.proxy.is_enabled() || domain.is_empty() {
         return false;
     }
     if is_ip_literal(domain) || is_loopback_name(domain) {
@@ -142,6 +142,9 @@ pub fn decide(cfg: &AppConfig, ep: &Endpoint<'_>, opts: DecideOpts) -> Action {
     if is_proxy_self(cfg, ep) {
         return Action::Direct;
     }
+    if !cfg.proxy.is_enabled() {
+        return Action::Direct;
+    }
 
     if ep.proto == Proto::Udp {
         if ep.port == 53 && cfg.dns_is_direct() {
@@ -149,7 +152,12 @@ pub fn decide(cfg: &AppConfig, ep: &Endpoint<'_>, opts: DecideOpts) -> Action {
         }
         match effective_udp_action(cfg, opts) {
             UdpAction::Direct => return Action::Direct,
-            UdpAction::Block => return Action::Block,
+            UdpAction::Block => {
+                if is_udp_block_exempt(cfg, ep) {
+                    return Action::Direct;
+                }
+                return Action::Block;
+            }
             UdpAction::Proxy => {}
         }
     }
@@ -194,11 +202,24 @@ pub fn decide(cfg: &AppConfig, ep: &Endpoint<'_>, opts: DecideOpts) -> Action {
     finalize_proxy(cfg, ep, opts, Action::Proxy)
 }
 
+/// Issue #169: when effective UDP action is `block`, exempt loopback (handled
+/// earlier), UDP/53, explicit `direct` routing rules, and `use_default_private`
+/// LAN/reserved networks. `default_action=direct` is intentionally NOT exempt.
+pub fn is_udp_block_exempt(cfg: &AppConfig, ep: &Endpoint<'_>) -> bool {
+    if ep.port == 53 {
+        return true;
+    }
+    if let Some(action) = match_user_rules(cfg, ep) {
+        return action == Action::Direct;
+    }
+    cfg.proxy_rules.routing.use_default_private && is_builtin_private(ep)
+}
+
 fn finalize_proxy(cfg: &AppConfig, ep: &Endpoint<'_>, opts: DecideOpts, action: Action) -> Action {
     if action != Action::Proxy {
         return action;
     }
-    if ep.proto == Proto::Tcp && ep.port == 53 && cfg.dns_is_direct() && !ep.is_fake_ip {
+    if ep.proto == Proto::Tcp && ep.port == 53 && cfg.dns_is_direct() {
         return Action::Direct;
     }
     let bypass = opts.fake_ip_bypasses_port_filter && ep.is_fake_ip;
@@ -648,5 +669,70 @@ mod tests {
         assert!(cfg.diagnostics.agent_ip_probe == false);
         let _ = ProxyRulesConfig::default();
         let _ = RoutingConfig::default();
+    }
+
+    #[test]
+    fn disabled_proxy_skips_fakeip_and_routes_direct() {
+        let mut cfg = cfg();
+        cfg.proxy.port = 0;
+        assert!(!should_fake_dns(&cfg, "oauth2.googleapis.com"));
+        let pub_ep = ep_v4(Ipv4Addr::new(1, 1, 1, 1), 443);
+        assert_eq!(decide(&cfg, &pub_ep, DecideOpts::WINDOWS), Action::Direct);
+    }
+
+    #[test]
+    fn udp_block_exempts_lan_and_direct_rule_but_not_default_action() {
+        let mut cfg = cfg();
+        cfg.proxy_rules.udp_mode = "block".into();
+        cfg.proxy_rules.routing.use_default_private = true;
+        cfg.proxy_rules.routing.default_action = "direct".into();
+
+        let lan_udp = Endpoint {
+            proto: Proto::Udp,
+            ..ep_v4(Ipv4Addr::new(192, 168, 1, 20), 50000)
+        };
+        assert_eq!(decide(&cfg, &lan_udp, DecideOpts::WINDOWS), Action::Direct);
+
+        // Public UDP must still be blocked even if default_action=direct!
+        let pub_udp = Endpoint {
+            proto: Proto::Udp,
+            ..ep_v4(Ipv4Addr::new(1, 1, 1, 1), 443)
+        };
+        assert_eq!(decide(&cfg, &pub_udp, DecideOpts::WINDOWS), Action::Block);
+
+        // Explicit direct rule exempts UDP block.
+        cfg.proxy_rules.routing.rules = vec![RouteRule {
+            name: "allow-stun".into(),
+            action: "direct".into(),
+            ip_cidrs_v4: vec!["1.1.1.1/32".into()],
+            protocols: vec!["udp".into()],
+            ..RouteRule::default()
+        }];
+        assert_eq!(decide(&cfg, &pub_udp, DecideOpts::WINDOWS), Action::Direct);
+    }
+
+    #[test]
+    fn proxy_auth_aliases_and_acp_defaults() {
+        let cfg = AppConfig::parse_str(
+            r#"{"proxy":{"host":"127.0.0.1","port":7898,"type":"socks5","user":"bob","pass":"pw"}}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.proxy.username, "bob");
+        assert_eq!(cfg.proxy.password, "pw");
+        assert!(cfg.proxy.has_auth());
+        assert_eq!(cfg.proxy.auth_log_suffix(), ", auth=bob:***");
+
+        assert!(crate::process::is_targeted(
+            "agy_acp_server",
+            &cfg,
+            crate::config::HostPlatform::Linux,
+            false
+        ));
+        assert!(crate::process::is_targeted(
+            "localharness_external.exe",
+            &cfg,
+            crate::config::HostPlatform::Windows,
+            false
+        ));
     }
 }

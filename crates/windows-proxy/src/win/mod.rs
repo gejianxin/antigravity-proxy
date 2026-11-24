@@ -31,7 +31,7 @@ pub fn startup() {
         hooks::install(&cfg);
         let proc_name = current_process_name();
         log::info(&format!(
-            "Antigravity-Proxy Windows DLL 已加载 (Rust v2.5) pid={} process={} targeted={} config={}",
+            "Antigravity-Proxy Windows DLL 已加载 (Rust v2.6) pid={} process={} targeted={} config={}",
             std::process::id(),
             proc_name,
             process::is_targeted(&proc_name, &cfg, HostPlatform::Windows, forced()),
@@ -40,10 +40,11 @@ pub fn startup() {
                 .unwrap_or_else(|| "(默认)".into())
         ));
         log::info(&format!(
-            "代理配置: {}://{}:{} FakeIP={} ({}) ipv6_mode={} udp_mode={} child_injection={}",
+            "代理配置: {}://{}:{}{} FakeIP={} ({}) ipv6_mode={} udp_mode={} child_injection={}",
             cfg.proxy.r#type,
             cfg.proxy.host,
             cfg.proxy.port,
+            cfg.proxy.auth_log_suffix(),
             if cfg.fake_ip.enabled { "开" } else { "关" },
             cfg.fake_ip.cidr,
             cfg.proxy_rules.ipv6_mode,

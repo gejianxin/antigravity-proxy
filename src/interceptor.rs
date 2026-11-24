@@ -26,7 +26,11 @@ pub unsafe fn handle_getaddrinfo(
         return ffi::real_getaddrinfo(node, service, hints, res);
     }
     let cfg = crate::get_config();
-    if !crate::process::is_targeted_process(cfg) || !cfg.fake_ip.enabled || node.is_null() {
+    if !crate::process::is_targeted_process(cfg)
+        || !cfg.fake_ip.enabled
+        || !cfg.proxy.is_enabled()
+        || node.is_null()
+    {
         return ffi::real_getaddrinfo(node, service, hints, res);
     }
 
@@ -88,7 +92,11 @@ pub unsafe fn handle_gethostbyname(name: *const libc::c_char) -> *mut libc::host
         return ffi::real_gethostbyname(name);
     }
     let cfg = crate::get_config();
-    if !crate::process::is_targeted_process(cfg) || !cfg.fake_ip.enabled || name.is_null() {
+    if !crate::process::is_targeted_process(cfg)
+        || !cfg.fake_ip.enabled
+        || !cfg.proxy.is_enabled()
+        || name.is_null()
+    {
         return ffi::real_gethostbyname(name);
     }
     let name_str = match CStr::from_ptr(name).to_str() {
@@ -121,7 +129,7 @@ pub unsafe fn handle_connect(
         return ffi::real_connect(sockfd, addr, addrlen);
     }
     let cfg = crate::get_config();
-    if !crate::process::is_targeted_process(cfg) || addr.is_null() {
+    if !crate::process::is_targeted_process(cfg) || !cfg.proxy.is_enabled() || addr.is_null() {
         return ffi::real_connect(sockfd, addr, addrlen);
     }
     let family = (*addr).sa_family as libc::c_int;
@@ -305,9 +313,27 @@ unsafe fn proxy_tcp(fd: libc::c_int, addr: *const libc::sockaddr, ep: &Endpoint)
 
     let host = Some(ep.host.as_str());
     let handshake = if cfg.proxy.r#type.eq_ignore_ascii_case("http") {
-        crate::http::http_handshake(fd, host, ep.port, addr, send_ms, recv_ms)
+        crate::http::http_handshake(
+            fd,
+            host,
+            ep.port,
+            addr,
+            &cfg.proxy.username,
+            &cfg.proxy.password,
+            send_ms,
+            recv_ms,
+        )
     } else {
-        crate::socks5::socks5_handshake(fd, host, ep.port, addr, send_ms, recv_ms)
+        crate::socks5::socks5_handshake(
+            fd,
+            host,
+            ep.port,
+            addr,
+            &cfg.proxy.username,
+            &cfg.proxy.password,
+            send_ms,
+            recv_ms,
+        )
     };
 
     match handshake {

@@ -20,6 +20,23 @@ pub fn is_excluded(proc_name: &str, cfg: &AppConfig) -> bool {
         .any(|pattern| name_matches(proc_name, pattern))
 }
 
+/// ACP Registry distributes `agy_acp_server` (PyInstaller Python bootstrap ->
+/// main Python process -> `localharness_external` Go agent engine).
+pub fn is_agy_acp_server(proc_name: &str) -> bool {
+    let lower = proc_name.trim().to_ascii_lowercase();
+    let stem = lower.strip_suffix(".exe").unwrap_or(&lower);
+    stem == "agy_acp_server"
+}
+
+pub fn is_acp_chain_child(proc_name: &str) -> bool {
+    if is_agy_acp_server(proc_name) {
+        return true;
+    }
+    let lower = proc_name.trim().to_ascii_lowercase();
+    let stem = lower.strip_suffix(".exe").unwrap_or(&lower);
+    stem == "localharness_external"
+}
+
 /// `force` is the `ANTIGRAVITY_PROXY_FORCE` override used by the Linux smoke test.
 pub fn is_targeted(proc_name: &str, cfg: &AppConfig, platform: HostPlatform, force: bool) -> bool {
     if force {

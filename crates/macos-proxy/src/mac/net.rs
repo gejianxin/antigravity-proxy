@@ -71,7 +71,30 @@ impl Addr {
 }
 
 fn proxy_addr(family: i32, cfg: &AppConfig) -> Option<Addr> {
-    let ip: Ipv4Addr = cfg.proxy.host.parse().ok()?;
+    let host_str = cfg.proxy.host.trim();
+    let ip: Ipv4Addr = if let Ok(v4) = host_str.parse::<Ipv4Addr>() {
+        v4
+    } else if host_str.eq_ignore_ascii_case("localhost") {
+        Ipv4Addr::LOCALHOST
+    } else {
+        // Resolve proxy hostname via real libSystem getaddrinfo
+        let c_host = std::ffi::CString::new(host_str).ok()?;
+        let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        hints.ai_socktype = libc::SOCK_STREAM;
+        let mut res: *mut libc::addrinfo = std::ptr::null_mut();
+        let ok = unsafe { libc::getaddrinfo(c_host.as_ptr(), std::ptr::null(), &hints, &mut res) };
+        if ok != 0 || res.is_null() {
+            return None;
+        }
+        let resolved = unsafe {
+            let sin = &*((*res).ai_addr as *const libc::sockaddr_in);
+            let v4 = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+            libc::freeaddrinfo(res);
+            v4
+        };
+        resolved
+    };
     let port = cfg.proxy.port.to_be();
     let mut addr = Addr {
         bytes: [0; 128],
@@ -211,7 +234,11 @@ unsafe fn handshake(fd: libc::c_int, host: &str, port: u16, cfg: &AppConfig) -> 
     let timeout = cfg.timeout.connect.max(1000);
     if cfg.proxy.is_http() {
         let authority = format!("{host}:{port}");
-        let req = proto::http_connect_request(&authority);
+        let req = proto::http_connect_request_with_auth(
+            &authority,
+            &cfg.proxy.username,
+            &cfg.proxy.password,
+        );
         if !send_all(fd, req.as_bytes(), timeout) {
             return false;
         }
@@ -219,6 +246,10 @@ unsafe fn handshake(fd: libc::c_int, host: &str, port: u16, cfg: &AppConfig) -> 
         let mut byte = [0u8; 1];
         while buf.len() < 2048 {
             if !recv_exact(fd, &mut byte, timeout) {
+                log(&format!(
+                    "HTTP CONNECT 接收响应失败{}",
+                    proto::http_mismatch_hint_for_io()
+                ));
                 return false;
             }
             buf.push(byte[0]);
@@ -233,13 +264,45 @@ unsafe fn handshake(fd: libc::c_int, host: &str, port: u16, cfg: &AppConfig) -> 
         }
         return false;
     }
-    if !send_all(fd, &proto::socks5_greeting(), timeout) {
+    let has_auth = cfg.proxy.has_auth();
+    if !send_all(fd, &proto::socks5_greeting_for_auth(has_auth), timeout) {
         return false;
     }
     let mut greet = [0u8; 2];
-    if !recv_exact(fd, &mut greet, timeout) || !proto::socks5_greeting_ok(&greet) {
-        log("SOCKS5 握手失败");
+    if !recv_exact(fd, &mut greet, timeout) {
+        log(&format!(
+            "SOCKS5 读取认证响应失败{}",
+            proto::socks5_mismatch_hint_for_io()
+        ));
         return false;
+    }
+    let choice = match proto::socks5_check_greeting(&greet, has_auth) {
+        Ok(c) => c,
+        Err(msg) => {
+            log(&msg);
+            return false;
+        }
+    };
+    if choice == proto::Socks5AuthChoice::UserPass {
+        let up_req = match proto::socks5_userpass_request(&cfg.proxy.username, &cfg.proxy.password) {
+            Ok(b) => b,
+            Err(msg) => {
+                log(&msg);
+                return false;
+            }
+        };
+        if !send_all(fd, &up_req, timeout) {
+            return false;
+        }
+        let mut up_resp = [0u8; 2];
+        if !recv_exact(fd, &mut up_resp, timeout) {
+            log("SOCKS5 读取账密认证响应失败");
+            return false;
+        }
+        if let Err(msg) = proto::socks5_userpass_ok(&up_resp) {
+            log(&msg);
+            return false;
+        }
     }
     let req = proto::socks5_connect_request(&SocksTarget::Domain(host.to_string()), port);
     if !send_all(fd, &req, timeout) {

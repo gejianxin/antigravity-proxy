@@ -57,7 +57,7 @@ fn decide(cfg: &AppConfig, ep: &Endpoint) -> Decision {
     match cfg.udp_action() {
         UdpAction::Direct => Decision::Direct,
         UdpAction::Block => {
-            if ep.port == 53 {
+            if is_udp_block_exempt(cfg, ep) {
                 Decision::Direct
             } else {
                 Decision::Block
@@ -100,6 +100,24 @@ fn decide(cfg: &AppConfig, ep: &Endpoint) -> Decision {
             Decision::Proxy
         }
     }
+}
+
+fn is_udp_block_exempt(cfg: &AppConfig, ep: &Endpoint) -> bool {
+    if ep.port == 53 {
+        return true;
+    }
+    if let Some(hit) = cfg.compiled_routes.decide(route::Query {
+        host: &ep.host,
+        ip_v4: ep.ip_v4.filter(|_| !ep.is_fake),
+        ip_v6: ep.ip_v6,
+        port: ep.port,
+        protocol: "udp",
+    }) {
+        if hit.rule.is_some() && hit.action == Action::Direct {
+            return true;
+        }
+    }
+    cfg.proxy_rules.routing.use_default_private && ep.is_lan() && !ep.is_fake
 }
 
 fn fallback_decision(cfg: &AppConfig) -> Decision {
@@ -483,6 +501,10 @@ unsafe fn ensure_session(
         return Ok(());
     }
 
+    if agy_core::global_udp_backoff().is_backed_off() {
+        return Err(libc::ECONNREFUSED);
+    }
+
     let cfg = crate::get_config();
     let send_ms = sockio::positive_timeout(cfg.timeout.send, 5000);
     let recv_ms = sockio::positive_timeout(cfg.timeout.recv, 5000);
@@ -500,9 +522,23 @@ unsafe fn ensure_session(
         ffi::real_close(control);
         return Err(err);
     }
-    let relay = match socks5::udp_associate(control, send_ms, recv_ms) {
-        Ok(relay) => relay,
-        Err(_) => {
+    let relay = match socks5::udp_associate(
+        control,
+        &cfg.proxy.username,
+        &cfg.proxy.password,
+        send_ms,
+        recv_ms,
+    ) {
+        Ok(relay) => {
+            agy_core::global_udp_backoff().record_success();
+            relay
+        }
+        Err(err) => {
+            if agy_core::global_udp_backoff().record_failure() {
+                crate::log_warn!(
+                    "[UDP] SOCKS5 UDP Associate 失败 ({err})，60 秒内不再重复尝试（QUIC 将自动回落 TCP，或在代理软件开启 UDP）"
+                );
+            }
             ffi::real_close(control);
             return Err(libc::ECONNREFUSED);
         }

@@ -158,7 +158,7 @@ pub unsafe extern "C" fn hook_connect(
         return raw_connect(fd, addr, len);
     };
     match routing::decide(config(), &ep.view(), DecideOpts::MACOS) {
-        Action::Direct => raw_connect(fd, addr, len),
+        Action::Direct => connect_direct(fd, addr, len, &ep),
         Action::Block => {
             *libc::__error() = if ep.v6_only {
                 libc::EAFNOSUPPORT
@@ -176,6 +176,49 @@ pub unsafe extern "C" fn hook_connect(
             }
         }
     }
+}
+
+unsafe fn connect_direct(
+    fd: libc::c_int,
+    addr: *const libc::sockaddr,
+    len: libc::socklen_t,
+    ep: &OwnedEp,
+) -> libc::c_int {
+    if ep.is_fake_ip {
+        if let Some(ref domain) = ep.domain {
+            let Ok(c_host) = CString::new(domain.as_str()) else {
+                *libc::__error() = libc::EHOSTUNREACH;
+                return -1;
+            };
+            let Ok(c_port) = CString::new(ep.port.to_string()) else {
+                *libc::__error() = libc::EHOSTUNREACH;
+                return -1;
+            };
+            let mut hints: libc::addrinfo = std::mem::zeroed();
+            hints.ai_family = ep.family;
+            hints.ai_socktype = libc::SOCK_STREAM;
+            let mut res: *mut libc::addrinfo = std::ptr::null_mut();
+            if raw_getaddrinfo(c_host.as_ptr(), c_port.as_ptr(), &hints, &mut res) == 0 && !res.is_null() {
+                let mut cur = res;
+                let mut rc = -1;
+                while !cur.is_null() {
+                    let ai = &*cur;
+                    rc = raw_connect(fd, ai.ai_addr, ai.ai_addrlen);
+                    if rc == 0 || *libc::__error() == libc::EINPROGRESS {
+                        break;
+                    }
+                    cur = ai.ai_next;
+                }
+                libc::freeaddrinfo(res);
+                log(&format!("[FakeIP] 已重解析直连: {domain}:{}", ep.port));
+                return rc;
+            }
+            log(&format!("[FakeIP] 直连重解析失败: {domain}:{}", ep.port));
+            *libc::__error() = libc::EHOSTUNREACH;
+            return -1;
+        }
+    }
+    raw_connect(fd, addr, len)
 }
 
 pub unsafe extern "C" fn hook_sendto(
